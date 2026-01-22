@@ -14,6 +14,7 @@ static char help[] = "SpMV benchmark using PETSc\n";
 #include <dirent.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <ctype.h>
 
 /* ========================================================================== */
 /* Matrix Market Parser                                                       */

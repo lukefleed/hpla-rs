@@ -14,10 +14,10 @@ include ${PETSC_DIR}/lib/petsc/conf/variables
 include ${PETSC_DIR}/lib/petsc/conf/rules
 
 # Compiler flags for maximum performance (use native CPU to match PETSc build)
-CFLAGS_OPT ?= -O3 -march=native -mtune=native -ffast-math -funroll-loops
+CFLAGS ?= -O3 -march=native -mtune=native -ffast-math -funroll-loops
 
-spmv_bench: spmv_bench.c
-	${PETSC_CC} ${CFLAGS_OPT} ${PETSC_CC_INCLUDES} -o $@ $< ${PETSC_LIB}
+spmv_bench: spvm_bench.c
+	${PETSC_CC} ${CFLAGS} ${PETSC_CC_INCLUDES} -o $@ $< ${PETSC_LIB}
 
 clean::
 	rm -f spmv_bench
