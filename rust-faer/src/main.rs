@@ -24,13 +24,13 @@ struct Args {
     #[arg(short, long, default_value = "results_faer.csv")]
     output: PathBuf,
 
-    #[arg(short, long, default_value_t = 10)]
+    #[arg(short, long, default_value_t = 100)]
     warmup: usize,
 
-    #[arg(short = 'n', long, default_value_t = 100)]
+    #[arg(short = 'n', long, default_value_t = 1000)]
     min_iterations: usize,
 
-    #[arg(short = 't', long, default_value_t = 1.0)]
+    #[arg(short = 't', long, default_value_t = 5.0)]
     min_time_secs: f64,
 }
 
