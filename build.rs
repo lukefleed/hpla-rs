@@ -8,9 +8,6 @@ use std::path::PathBuf;
 use std::process::Command;
 
 fn main() {
-    // ----------------------------------------------------
-    // strictly use Spack for PETSc (ignore PETSC_DIR/PETSC_ARCH)
-    // ----------------------------------------------------
     let petsc_output = Command::new("spack")
         .args(["location", "-i", "petsc"])
         .output()
@@ -57,19 +54,48 @@ fn main() {
             String::from_utf8_lossy(&eigen_output.stderr)
         );
     }
-    let eigen_dir = String::from_utf8_lossy(&eigen_output.stdout)
-        .trim()
-        .to_string();
-    let eigen_include = PathBuf::from(&eigen_dir).join("include").join("eigen3");
-
+    // ----------------------------------------------------
+    // C++ Eigen compilation
+    // ----------------------------------------------------
+    let eigen_dir = PathBuf::from("resources/eigen");
     cc::Build::new()
         .cpp(true)
         .file("eigen_wrapper.cpp")
-        .include(eigen_include)
+        .include(eigen_dir)
+        .compiler("clang++")
         .flag("-O3")
         .flag("-march=native")
         .flag("-ffast-math")
+        .flag("-w") // Suppress all internal Eigen C++ warnings
         .compile("eigen_wrapper");
+
+    // ----------------------------------------------------
+    // C Intel MKL compilation
+    // ----------------------------------------------------
+    // Using the explicit Spack MKL path provided by the user
+    let mkl_prefix = PathBuf::from("/roberto/llombardo/spack/opt/spack/linux-icelake/intel-oneapi-mkl-2024.2.2-3yphy2srhn5noy4jw7njcwotmjszg3ap");
+    let mkl_include = mkl_prefix.join("mkl/2024.2/include");
+    let mkl_lib = mkl_prefix.join("mkl/2024.2/lib");
+
+    println!("cargo::rustc-link-search=native={}", mkl_lib.display());
+    // MKL Sequential Single-Threaded Link Line
+    // Force the linker to keep all MKL libraries even if not directly referenced by our object files
+    // We pass them as a single comma-separated linker argument to bypass rustc reordering
+    println!("cargo::rustc-link-arg=-Wl,--no-as-needed,-lmkl_intel_lp64,-lmkl_sequential,-lmkl_core,--as-needed");
+    println!("cargo::rustc-link-lib=dylib=pthread");
+    println!("cargo::rustc-link-lib=dylib=m");
+    println!("cargo::rustc-link-lib=dylib=dl");
+    // Inject runtime library path (RPATH) so cargo bench executes without LD_LIBRARY_PATH
+    println!("cargo::rustc-link-arg=-Wl,-rpath,{}", mkl_lib.display());
+
+    cc::Build::new()
+        .file("mkl_wrapper.c")
+        .include(mkl_include)
+        .compiler("clang")
+        .flag("-O3")
+        .flag("-march=native")
+        .flag("-ffast-math")
+        .compile("mkl_wrapper");
 
     // Recompilation triggers
     println!("cargo::rerun-if-changed=petsc_wrapper.c");

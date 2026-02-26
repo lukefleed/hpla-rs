@@ -4,6 +4,7 @@
 //! and the foundational `spmv_faer` benchmark kernel.
 
 pub mod eigen;
+pub mod mkl;
 pub mod petsc;
 
 use std::fs::File;

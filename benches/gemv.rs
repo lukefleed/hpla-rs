@@ -9,6 +9,7 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Through
 use faer::col::Col;
 use faer::sparse::SparseColMat;
 use hpla_rs::eigen::{libeigen_spmv_execute, libeigen_spmv_setup, libeigen_spmv_teardown};
+use hpla_rs::mkl::{libmkl_spmv_execute, libmkl_spmv_setup, libmkl_spmv_teardown};
 use hpla_rs::petsc::{libpetsc_spmv_execute, libpetsc_spmv_setup, libpetsc_spmv_teardown};
 use hpla_rs::{load_mtx_raw, spmv_faer};
 use std::fs;
@@ -111,6 +112,28 @@ fn bench_spmv(c: &mut Criterion) {
             });
 
             libpetsc_spmv_teardown(ctx);
+        }
+
+        // ----------------------------------------------------
+        // Intel MKL (Sparse BLAS Inspection-Execution)
+        // ----------------------------------------------------
+        unsafe {
+            let ctx = libmkl_spmv_setup(
+                raw.nrows as i32,
+                raw.ncols as i32,
+                raw.nnz as i32,
+                raw.row_ptr.as_ptr(),
+                raw.col_idx.as_ptr(),
+                raw.values.as_ptr(),
+            );
+
+            group.bench_with_input(BenchmarkId::new("mkl", "csr_ie"), &(), |b, _| {
+                b.iter(|| {
+                    libmkl_spmv_execute(ctx);
+                });
+            });
+
+            libmkl_spmv_teardown(ctx);
         }
 
         // ----------------------------------------------------
