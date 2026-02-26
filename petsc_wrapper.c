@@ -1,7 +1,7 @@
 // Minimal C wrapper to interface PETSc with Rust FFI.
 // 
 // Operates on pre-allocated raw memory buffers constructed by Rust
-// to guarantee a zero-copy architecture for apples-to-apples comparisons.
+// to guarantee a zero-copy architecture for fair comparisons.
 
 #include <petscmat.h>
 #include <petscvec.h>

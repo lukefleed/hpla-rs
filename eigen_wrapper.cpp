@@ -1,7 +1,7 @@
 // Minimal C++ wrapper to interface Eigen with Rust FFI.
 // 
 // Operates on pre-allocated raw memory buffers constructed by Rust
-// to guarantee a zero-copy architecture (CSC) for apples-to-apples comparisons.
+// to guarantee a zero-copy architecture (CSC) for fair comparisons.
 
 #include <Eigen/Sparse>
 #include <Eigen/Dense>

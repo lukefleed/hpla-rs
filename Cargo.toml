@@ -1,9 +1,9 @@
 [package]
-name = "spmv-bench"
+name = "hpla-rs"
 version = "0.1.0"
 edition = "2024"
 authors = ["SpMV Benchmark Suite"]
-description = "High-performance SpMV benchmark using faer and PETSc via FFI"
+description = "High-performance linear algebra, in Rust"
 readme = "README.md"
 license = "MIT"
 

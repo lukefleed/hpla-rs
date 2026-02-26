@@ -141,5 +141,12 @@ fn bench_spmv(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, bench_spmv);
+criterion_group!(
+    name = benches;
+    config = Criterion::default()
+        .sample_size(100)
+        .warm_up_time(std::time::Duration::from_secs(3))
+        .measurement_time(std::time::Duration::from_secs(5));
+    targets = bench_spmv
+);
 criterion_main!(benches);
