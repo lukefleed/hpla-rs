@@ -27,7 +27,7 @@ pub struct RawMatrix {
     pub col_ptr: Vec<i32>,
     pub row_idx: Vec<i32>,
     pub csc_values: Vec<f64>,
-    pub triplets: Vec<Triplet<u32, f64>>, // For Faer CSC
+    pub triplets: Vec<Triplet<u32, u32, f64>>, // For Faer CSC
 }
 
 // Helper to determine symmetry reading the raw header
@@ -86,10 +86,10 @@ pub fn load_mtx_raw(path: &PathBuf) -> Result<RawMatrix, String> {
     let nnz = triplets.len();
 
     triplets.sort_unstable_by(|a, b| {
-        if a.row() != b.row() {
-            a.row().cmp(&b.row())
+        if a.row != b.row {
+            a.row.cmp(&b.row)
         } else {
-            a.col().cmp(&b.col())
+            a.col.cmp(&b.col)
         }
     });
 
@@ -102,23 +102,23 @@ pub fn load_mtx_raw(path: &PathBuf) -> Result<RawMatrix, String> {
     }
 
     for (i, t) in triplets.iter().enumerate() {
-        col_idx[i] = t.col() as i32;
-        csr_values[i] = t.val();
+        col_idx[i] = t.col as i32;
+        csr_values[i] = t.val;
     }
 
     // Create equivalent CSC arrays for Eigen mapping
     let mut csc_triplets = triplets.clone();
     csc_triplets.sort_unstable_by(|a, b| {
-        if a.col() != b.col() {
-            a.col().cmp(&b.col())
+        if a.col != b.col {
+            a.col.cmp(&b.col)
         } else {
-            a.row().cmp(&b.row())
+            a.row.cmp(&b.row)
         }
     });
 
     let mut col_counts = vec![0; ncols];
     for t in &csc_triplets {
-        col_counts[t.col() as usize] += 1;
+        col_counts[t.col as usize] += 1;
     }
 
     let mut col_ptr = vec![0i32; ncols + 1];
@@ -130,8 +130,8 @@ pub fn load_mtx_raw(path: &PathBuf) -> Result<RawMatrix, String> {
     }
 
     for (i, t) in csc_triplets.into_iter().enumerate() {
-        row_idx[i] = t.row() as i32;
-        csc_values[i] = t.val();
+        row_idx[i] = t.row as i32;
+        csc_values[i] = t.val;
     }
 
     Ok(RawMatrix {

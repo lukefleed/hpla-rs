@@ -16,7 +16,7 @@ use std::path::PathBuf;
 
 /// Discovers Matrix Market `.mtx` files available for benchmarking.
 fn get_matrices() -> Vec<PathBuf> {
-    let dir = PathBuf::from("../matrices"); // Assumes we run from spmv-bench/
+    let dir = PathBuf::from("matrices");
     let mut files = Vec::new();
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {

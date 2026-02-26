@@ -3,7 +3,6 @@
 //! Exposes external C functions that bypass standard library overhead
 //! by operating directly on raw pointers.
 
-use std::ffi::c_void;
 use std::os::raw::{c_double, c_int};
 
 /// Opaque struct representing the C-side internal context (Mat, Vecs).
@@ -12,7 +11,7 @@ pub struct PetscBenchContext {
     _private: [u8; 0],
 }
 
-extern "C" {
+unsafe extern "C" {
     pub fn libpetsc_spmv_setup(
         nrows: i32,
         ncols: i32,

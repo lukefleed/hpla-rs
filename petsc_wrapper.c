@@ -22,7 +22,7 @@ typedef struct {
 
 // Initialize PETSc and create the matrix from raw CSR pointers
 // Note: We expect 32-bit indices (PetscInt typically 32-bit depending on config, we enforce u32 in rust)
-extern "C" PetscBenchContext* libpetsc_spmv_setup(
+PetscBenchContext* libpetsc_spmv_setup(
     int32_t nrows, 
     int32_t ncols, 
     int32_t nnz,
@@ -70,14 +70,14 @@ extern "C" PetscBenchContext* libpetsc_spmv_setup(
     return ctx;
 }
 
-extern "C" void libpetsc_spmv_execute(PetscBenchContext* ctx) {
+void libpetsc_spmv_execute(PetscBenchContext* ctx) {
     // y = y_init
     VecCopy(ctx->y_init, ctx->y);
     // y = A*x + y
     MatMultAdd(ctx->A, ctx->x, ctx->y, ctx->y);
 }
 
-extern "C" void libpetsc_spmv_teardown(PetscBenchContext* ctx) {
+void libpetsc_spmv_teardown(PetscBenchContext* ctx) {
     MatDestroy(&ctx->A);
     VecDestroy(&ctx->x);
     VecDestroy(&ctx->y);

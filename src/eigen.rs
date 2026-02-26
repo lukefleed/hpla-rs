@@ -11,7 +11,7 @@ pub struct EigenBenchContext {
     _private: [u8; 0],
 }
 
-extern "C" {
+unsafe extern "C" {
     pub fn libeigen_spmv_setup(
         nrows: i32,
         ncols: i32,
