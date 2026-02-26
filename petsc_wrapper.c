@@ -71,9 +71,7 @@ PetscBenchContext* libpetsc_spmv_setup(
 }
 
 void libpetsc_spmv_execute(PetscBenchContext* ctx) {
-    // y = y_init
-    VecCopy(ctx->y_init, ctx->y);
-    // y = A*x + y
+    // y = A * x + y
     MatMultAdd(ctx->A, ctx->x, ctx->y, ctx->y);
 }
 

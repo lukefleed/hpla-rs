@@ -47,9 +47,7 @@ EigenBenchContext* libeigen_spmv_setup(
 }
 
 void libeigen_spmv_execute(EigenBenchContext* ctx) {
-    // y = y_init
-    *(ctx->y) = *(ctx->y_init);
-    // y = A * x + y
+    // y += A * x
     *(ctx->y) += (*(ctx->A)) * (*(ctx->x));
 }
 

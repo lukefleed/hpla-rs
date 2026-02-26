@@ -8,9 +8,9 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use faer::col::Col;
 use faer::sparse::SparseColMat;
-use spmv_bench::eigen::{libeigen_spmv_execute, libeigen_spmv_setup, libeigen_spmv_teardown};
-use spmv_bench::petsc::{libpetsc_spmv_execute, libpetsc_spmv_setup, libpetsc_spmv_teardown};
-use spmv_bench::{load_mtx_raw, spmv_faer};
+use hpla_rs::eigen::{libeigen_spmv_execute, libeigen_spmv_setup, libeigen_spmv_teardown};
+use hpla_rs::petsc::{libpetsc_spmv_execute, libpetsc_spmv_setup, libpetsc_spmv_teardown};
+use hpla_rs::{load_mtx_raw, spmv_faer};
 use std::fs;
 use std::path::PathBuf;
 
@@ -42,10 +42,10 @@ fn bench_spmv(c: &mut Criterion) {
         let mut group = c.benchmark_group(format!("spmv_{}", name));
 
         // Setup Throughput purely for memory bandwidth or flop/s representation
-        // For SpMV: 2*NNZ ops
-        // Bandwidth: (rows+1)*4 + nnz*4 + nnz*8 + cols*8 + rows*8
+        // For SpMV (y += A*x): 2*NNZ ops
+        // Bandwidth: (rows+1)*4 + nnz*4 + nnz*8 + cols*8 + rows*16 (read y + write y)
         let bytes =
-            ((raw.nrows + 1) * 4 + raw.nnz * 4 + raw.nnz * 8 + raw.ncols * 8 + raw.nrows * 8)
+            ((raw.nrows + 1) * 4 + raw.nnz * 4 + raw.nnz * 8 + raw.ncols * 8 + raw.nrows * 16)
                 as u64;
         group.throughput(Throughput::Bytes(bytes));
 
@@ -60,10 +60,8 @@ fn bench_spmv(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::new("faer", "csc"), &(), |b, _| {
             b.iter(|| {
-                // We reload y in the bench loop to prevent accumulation issues,
-                // but note that this slightly adds overhead if not cache-hot.
-                // However, doing y = Ax + y modifies y each time.
-                y_faer.copy_from(&y_init_faer);
+                // We compute y = A*x + y (Accum::Add / MatMultAdd) without copying y_init overhead
+                // inside this loop to preserve cache and match theoretical limits precisely.
                 spmv_faer(&a_faer, &x_faer, &mut y_faer);
                 criterion::black_box(&mut y_faer);
             });

@@ -70,8 +70,8 @@ pub fn load_mtx_raw(path: &PathBuf) -> Result<RawMatrix, String> {
     let mut row_counts = vec![0; nrows];
 
     for ([r, c], &v) in coords.iter().zip(values.iter()) {
-        let row = *r as usize;
-        let col = *c as usize;
+        let row = *r;
+        let col = *c;
 
         triplets.push(Triplet::new(row as u32, col as u32, v));
         row_counts[row] += 1;

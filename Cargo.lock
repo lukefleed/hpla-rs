@@ -580,6 +580,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc0fef456e4baa96da950455cd02c081ca953b141298e41db3fc7e36b1da849c"
 
 [[package]]
+name = "hpla-rs"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "clap",
+ "criterion",
+ "csv",
+ "faer",
+ "matrix-market-rs",
+ "serde",
+]
+
+[[package]]
 name = "interpol"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1006,19 +1019,6 @@ name = "shlex"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
-
-[[package]]
-name = "spmv-bench"
-version = "0.1.0"
-dependencies = [
- "cc",
- "clap",
- "criterion",
- "csv",
- "faer",
- "matrix-market-rs",
- "serde",
-]
 
 [[package]]
 name = "strsim"
