@@ -1,7 +1,12 @@
+//! Low-level FFI bindings to the C PETSc wrapper.
+//!
+//! Exposes external C functions that bypass standard library overhead
+//! by operating directly on raw pointers.
+
 use std::ffi::c_void;
 use std::os::raw::{c_double, c_int};
 
-// Opaque struct representing the C-side context
+/// Opaque struct representing the C-side internal context (Mat, Vecs).
 #[repr(C)]
 pub struct PetscBenchContext {
     _private: [u8; 0],

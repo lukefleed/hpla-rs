@@ -1,8 +1,13 @@
+//! Core library module handling matrix I/O and Faer SpMV kernels.
+//!
+//! Provides the data structures required for Matrix Market file parsing
+//! and the foundational `spmv_faer` benchmark kernel.
+
 pub mod petsc;
 
 use std::fs::File;
-use std::io::BufReader;
 use std::io::BufRead;
+use std::io::BufReader;
 use std::path::PathBuf;
 
 use faer::col::Col;
@@ -47,12 +52,16 @@ pub fn load_mtx_raw(path: &PathBuf) -> Result<RawMatrix, String> {
         return Err("Only sparse matrices supported".into());
     };
 
+    if nrows > u32::MAX as usize || ncols > u32::MAX as usize {
+        return Err("Matrix dimensions exceed u32 index limits".into());
+    }
+
     let capacity = if is_symmetric || is_skew {
         coords.len() * 2
     } else {
         coords.len()
     };
-    
+
     let mut triplets = Vec::with_capacity(capacity);
     let mut row_counts = vec![0; nrows];
 
@@ -71,7 +80,7 @@ pub fn load_mtx_raw(path: &PathBuf) -> Result<RawMatrix, String> {
     }
 
     let nnz = triplets.len();
-    
+
     triplets.sort_unstable_by(|a, b| {
         if a.row() != b.row() {
             a.row().cmp(&b.row())

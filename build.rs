@@ -1,3 +1,9 @@
+//! Custom build script for compiling the FFI C wrapper.
+//!
+//! Automatically locates the PETSc installation via Spack and passes
+//! aggressive optimization flags to `clang` before linking it statically
+//! to our Rust crate.
+
 use std::env;
 use std::path::PathBuf;
 use std::process::Command;

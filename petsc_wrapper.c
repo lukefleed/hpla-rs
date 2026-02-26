@@ -1,10 +1,15 @@
+// Minimal C wrapper to interface PETSc with Rust FFI.
+// 
+// Operates on pre-allocated raw memory buffers constructed by Rust
+// to guarantee a zero-copy architecture for apples-to-apples comparisons.
+
 #include <petscmat.h>
 #include <petscvec.h>
 #include <petscsys.h>
 #include <stdint.h>
 #include <stdio.h>
 
-// Forward declare the benchmark context
+// Forward declare the benchmark context holding PETSc objects
 typedef struct {
     Mat A;
     Vec x;
@@ -26,12 +31,10 @@ extern "C" PetscBenchContext* libpetsc_spmv_setup(
     const double *values,
     int disable_inode)
 {
-    // Need to initialize PETSc first
-    // We pass dummy args, but can be configured if needed
-    if (!PetscInitializeCalled) {
-        int argc = 0;
-        char **argv = NULL;
-        PetscInitialize(&argc, &argv, NULL, NULL);
+    PetscBool initialized;
+    PetscInitialized(&initialized);
+    if (!initialized) {
+        PetscInitializeNoArguments();
     }
 
     PetscBenchContext* ctx = (PetscBenchContext*)malloc(sizeof(PetscBenchContext));
