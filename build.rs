@@ -64,7 +64,38 @@ fn main() {
         .flag("-flto")
         .compile("petsc_wrapper");
 
+    // Auto-detect Eigen via Spack
+    let eigen_dir = env::var("EIGEN_DIR").unwrap_or_else(|_| {
+        let output = Command::new("spack")
+            .args(["location", "-i", "eigen"])
+            .output()
+            .expect("Failed to execute spack for eigen");
+
+        if !output.status.success() {
+            panic!(
+                "spack location -i eigen failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    });
+
+    let eigen_include = PathBuf::from(&eigen_dir).join("include").join("eigen3");
+
+    cc::Build::new()
+        .cpp(true)
+        .file("eigen_wrapper.cpp")
+        .include(eigen_include)
+        .flag("-O3")
+        .flag("-march=native")
+        .flag("-ffast-math")
+        .flag("-flto")
+        .compile("eigen_wrapper");
+
     println!("cargo::rerun-if-changed=petsc_wrapper.c");
+    println!("cargo::rerun-if-changed=eigen_wrapper.cpp");
     println!("cargo::rerun-if-env-changed=PETSC_DIR");
     println!("cargo::rerun-if-env-changed=PETSC_ARCH");
+    println!("cargo::rerun-if-env-changed=EIGEN_DIR");
 }

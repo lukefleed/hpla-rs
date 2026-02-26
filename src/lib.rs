@@ -3,6 +3,7 @@
 //! Provides the data structures required for Matrix Market file parsing
 //! and the foundational `spmv_faer` benchmark kernel.
 
+pub mod eigen;
 pub mod petsc;
 
 use std::fs::File;
@@ -23,6 +24,9 @@ pub struct RawMatrix {
     pub row_ptr: Vec<i32>,
     pub col_idx: Vec<i32>,
     pub values: Vec<f64>,
+    pub col_ptr: Vec<i32>,
+    pub row_idx: Vec<i32>,
+    pub csc_values: Vec<f64>,
     pub triplets: Vec<Triplet<u32, f64>>, // For Faer CSC
 }
 
@@ -102,6 +106,34 @@ pub fn load_mtx_raw(path: &PathBuf) -> Result<RawMatrix, String> {
         csr_values[i] = t.val();
     }
 
+    // Create equivalent CSC arrays for Eigen mapping
+    let mut csc_triplets = triplets.clone();
+    csc_triplets.sort_unstable_by(|a, b| {
+        if a.col() != b.col() {
+            a.col().cmp(&b.col())
+        } else {
+            a.row().cmp(&b.row())
+        }
+    });
+
+    let mut col_counts = vec![0; ncols];
+    for t in &csc_triplets {
+        col_counts[t.col() as usize] += 1;
+    }
+
+    let mut col_ptr = vec![0i32; ncols + 1];
+    let mut row_idx = vec![0i32; nnz];
+    let mut csc_values = vec![0.0f64; nnz];
+
+    for i in 0..ncols {
+        col_ptr[i + 1] = col_ptr[i] + col_counts[i] as i32;
+    }
+
+    for (i, t) in csc_triplets.into_iter().enumerate() {
+        row_idx[i] = t.row() as i32;
+        csc_values[i] = t.val();
+    }
+
     Ok(RawMatrix {
         nrows,
         ncols,
@@ -109,6 +141,9 @@ pub fn load_mtx_raw(path: &PathBuf) -> Result<RawMatrix, String> {
         row_ptr,
         col_idx,
         values: csr_values,
+        col_ptr,
+        row_idx,
+        csc_values,
         triplets,
     })
 }
