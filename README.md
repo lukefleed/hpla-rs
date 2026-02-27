@@ -31,24 +31,35 @@
    tar -xvf thermal2.tar.gz
    ```   
 
-5. Load the necessary environments:
+5. Load the necessary environments and build the PSBLAS C/C++ wrappers:
 
    ```bash
    source ~/.cargo/env
    source ~/spack/share/spack/setup-env.sh
+   spack load intel-oneapi-mkl
+   spack load openmpi
+   
+   # Build PSBLAS locally using Clang with LTO and Position Independent Code
+   bash build_psblas.sh
    ```
 
-6. Execute the benchmarking suite:
+6. Execute the benchmarking suite in a strictly isolated, single-threaded SOTA environment:
 
    ```bash
-   cargo bench
+   cargo check --all-targets --all-features
+   taskset -c 0 cargo bench 
    ```
 
-Criterion will automatically measure cycle-accurate timings and generate plots/reports in the `target/criterion/` directory.
+Criterion will automatically measure cycle-accurate timings and generate plots/reports in the `target/criterion/` directory. You can also plot with
+
+```bash
+cd python
+python3 plot.py
+```
 
 ## Benchmarks Configuration
 
-The `cargo bench` suite compares different state-of-the-art libraries performing the Sparse General Matrix-Vector (SpGEMV) multiplication: `y += A * x`. All external backends are compiled via Clang/LLVM with `-O3 -march=native -ffast-math -flto` to ensure maximal SIMD autovectorization and operate via a Zero-Copy memory interface.
+The `cargo bench` suite compares different libraries performing the Sparse General Matrix-Vector (SpGEMV) multiplication: `y += A * x`. All external backends are compiled via Clang/LLVM with `-O3 -march=native -ffast-math -flto` to ensure maximal SIMD autovectorization and operate via a Zero-Copy memory interface.
 
 The harness evaluates the following configurations:
 
@@ -57,3 +68,4 @@ The harness evaluates the following configurations:
 * **`petsc/csr_raw`**: C FFI bindings to PETSc. It operates on the same CSR layout but explicitly forces the Inode routine off (scalar `MatMultAdd`). This is useful to measure the precise impact of the Inode heuristic vs the baseline C loop.
 * **`eigen/csc_map`**: C++ FFI bindings to [Eigen](https://eigen.tuxfamily.org/). Uses an `Eigen::Map` to project the CSC memory buffer into an `Eigen::SparseMatrix` without copies. The multiplication is evaluated purely via C++ Template Expressions (`*y += (*A) * (*x);`).
 * **`mkl/csr_ie`**: C FFI bindings to [Intel oneMKL](https://www.intel.com/content/www/us/en/developer/tools/oneapi/onemkl.html) Sparse BLAS. Uses the  Inspection-Execution API (`mkl_sparse_d_create_csr`, `mkl_sparse_optimize`) over a CSR layout. This routine heuristically inspects the matrix topology ahead of time, rearranging its representation internally to map perfectly onto the CPU's L1/L2 caches and AVX-512 FMA registers before invoking `mkl_sparse_d_mv`.
+* **`psblas/csr`**: C++ FFI bindings to [PSBLAS](https://github.com/sfilippone/psblas3) (Parallel Sparse BLAS). This framework handles both serial and parallel environments, internally executing OpenMPI. To preserve L3 Cache coherency on a single-node run, CPU affinity is programmatically locked via `sched_setaffinity` overriding MPI setup daemons, ensuring an exact cycle-accurate comparison with serial libraries.

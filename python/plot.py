@@ -24,22 +24,6 @@ plt.rcParams.update({
     # 'text.usetex': True 
 })
 
-# Color and Hatch mapping for consistent backend representation (Colorblind + B/W Print friendly)
-COLOR_MAP = {
-    'faer/csc': '#d62728',         # Muted Red
-    'eigen/csc_map': '#1f77b4',    # Muted Blue
-    'petsc/csr_inodes': '#2ca02c', # Muted Green
-    'petsc/csr_raw': '#98df8a',    # Light Green
-    'mkl/csr_ie': '#9467bd'        # Muted Purple
-}
-
-HATCH_MAP = {
-    'faer/csc': '//',
-    'eigen/csc_map': '\\\\',
-    'petsc/csr_inodes': '..',
-    'petsc/csr_raw': '',
-    'mkl/csr_ie': 'xx'
-}
 
 def load_data(criterion_path):
     data = []
@@ -96,15 +80,7 @@ def generate_plots(df, output_dir):
     # Sort configurations to have a consistent order
     config_order = ['faer/csc', 'eigen/csc_map', 'petsc/csr_inodes', 'petsc/csr_raw', 'psblas/csr', 'mkl/csr_ie']
     
-    # Dynamically assign colors and hatch patterns based on present configurations
-    unique_configs = df['Configuration'].unique()
-    # Use a Seaborn palette (e.g. vibrant or deep) adapting to the number of configs
-    palette = sns.color_palette("deep", len(unique_configs))
-    color_map = dict(zip(unique_configs, palette))
-    
-    # Predefined list of recognizable hatch patterns for black & white printing
-    available_hatches = ['//', '\\\\', '..', '', 'xx', 'O', '*', 'o', '.']
-    hatch_map = {cfg: available_hatches[i % len(available_hatches)] for i, cfg in enumerate(unique_configs)}
+
     
     for matrix in matrices:
         matrix_df = df[df['Matrix'] == matrix].copy()
@@ -124,20 +100,15 @@ def generate_plots(df, output_dir):
         
         bars = plt.bar(
             x_pos, 
-            matrix_df['Throughput (GiB/s)'],
-            color=[COLOR_MAP.get(cfg, '#95a5a6') for cfg in matrix_df['Configuration']],
+            matrix_df['Throughput (GFLOP/s)'],
+            color=bar_colors,
             edgecolor='black',
             linewidth=1.2,
             zorder=3
         )
-        
-        # Apply hatch patterns for B/W printing clarity
-        for i, bar in enumerate(bars):
-            cfg = matrix_df['Configuration'].iloc[i]
-            bar.set_hatch(HATCH_MAP.get(cfg, ''))
 
-        plt.title(f'SpGEMV Memory Performance on {matrix}', pad=15, fontsize=14)
-        plt.ylabel('Memory Throughput (GiB/s)', labelpad=10, fontsize=12)
+        plt.title(f'SpGEMV Performance on {matrix}', pad=15, fontsize=14)
+        plt.ylabel('Throughput (GFLOP/s)', labelpad=10, fontsize=12)
         
         # Annotate bars with exact values
         for bar in bars:

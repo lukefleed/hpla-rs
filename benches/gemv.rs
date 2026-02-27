@@ -194,7 +194,7 @@ criterion_group!(
     config = Criterion::default()
         .sample_size(100)
         .warm_up_time(std::time::Duration::from_secs(3))
-        .measurement_time(std::time::Duration::from_secs(5));
+        .measurement_time(std::time::Duration::from_secs(8));
     targets = bench_spmv
 );
 criterion_main!(benches);
