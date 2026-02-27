@@ -33,11 +33,13 @@ fn main() {
     println!("cargo::rustc-link-arg=-Wl,-rpath,{}", petsc_lib.display());
 
     cc::Build::new()
+        .compiler("clang")
         .file("petsc_wrapper.c")
         .include(petsc_include)
         .flag("-O3")
         .flag("-march=native")
         .flag("-ffast-math")
+        .flag("-flto")
         .compile("petsc_wrapper");
 
     // ----------------------------------------------------
@@ -67,6 +69,7 @@ fn main() {
         .flag("-march=native")
         .flag("-ffast-math")
         .flag("-w") // Suppress all internal Eigen C++ warnings
+        .flag("-flto")
         .compile("eigen_wrapper");
 
     // ----------------------------------------------------
@@ -95,9 +98,75 @@ fn main() {
         .flag("-O3")
         .flag("-march=native")
         .flag("-ffast-math")
+        .flag("-flto")
         .compile("mkl_wrapper");
+
+    // ----------------------------------------------------
+    // C++ PSBLAS compilation
+    // ----------------------------------------------------
+    let psblas_dir = PathBuf::from("local/psblas3");
+    let psblas_include = psblas_dir.join("include");
+    let psblas_lib = psblas_dir.join("lib");
+
+    let mpi_output = Command::new("spack")
+        .args(["location", "-i", "openmpi"])
+        .output()
+        .expect("Failed to execute spack command for OpenMPI. Is spack sourced & in your PATH?");
+
+    if !mpi_output.status.success() {
+        panic!(
+            "spack location -i openmpi failed. Make sure OpenMPI is installed via Spack.\nError: {}",
+            String::from_utf8_lossy(&mpi_output.stderr)
+        );
+    }
+    let mpi_dir = String::from_utf8_lossy(&mpi_output.stdout)
+        .trim()
+        .to_string();
+    let mpi_lib = PathBuf::from(&mpi_dir).join("lib");
+    let mpi_include = PathBuf::from(&mpi_dir).join("include");
+
+    println!("cargo::rustc-link-search=native={}", psblas_lib.display());
+    println!("cargo::rustc-link-search=native={}", mpi_lib.display());
+
+    cc::Build::new()
+        .cpp(true)
+        .file("psblas_wrapper.cpp")
+        .include(psblas_include)
+        .include(mpi_include)
+        .compiler("clang++")
+        .flag("-O3")
+        .flag("-march=native")
+        .flag("-ffast-math")
+        .flag("-Wno-return-type-c-linkage") // Suppress PSBLAS third-party header warnings for std::complex C-linkage
+        .flag("-Wno-unused-parameter")
+        .flag("-flto")
+        .compile("psblas_wrapper");
+
+    // Force linkage by using link-arg instead of link-lib static, as rustc will
+    // aggressively discard static archives if no Rust FFI directly calls them,
+    // ignoring our hidden C++ wrapper dependencies.
+    println!("cargo::rustc-link-arg=-Wl,--push-state,--no-as-needed");
+    println!("cargo::rustc-link-arg=-lpsb_cbind");
+    println!("cargo::rustc-link-arg=-lpsb_linsolve");
+    println!("cargo::rustc-link-arg=-lpsb_prec");
+    println!("cargo::rustc-link-arg=-lpsb_ext");
+    println!("cargo::rustc-link-arg=-lpsb_util");
+    println!("cargo::rustc-link-arg=-lpsb_base");
+    println!("cargo::rustc-link-arg=-Wl,--pop-state");
+
+    // Link Fortran runtime
+    println!("cargo::rustc-link-lib=dylib=gfortran");
+
+    // Link MPI
+    println!("cargo::rustc-link-lib=dylib=mpi_usempif08");
+    println!("cargo::rustc-link-lib=dylib=mpi_usempi_ignore_tkr");
+    println!("cargo::rustc-link-lib=dylib=mpi_mpifh");
+    println!("cargo::rustc-link-lib=dylib=mpi");
+    println!("cargo::rustc-link-arg=-Wl,-rpath,{}", mpi_lib.display());
 
     // Recompilation triggers
     println!("cargo::rerun-if-changed=petsc_wrapper.c");
     println!("cargo::rerun-if-changed=eigen_wrapper.cpp");
+    println!("cargo::rerun-if-changed=mkl_wrapper.c");
+    println!("cargo::rerun-if-changed=psblas_wrapper.cpp");
 }

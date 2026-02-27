@@ -1,7 +1,8 @@
 rust-faer/target
-matrices
-resources
+matrices/
+resources/
 GEMINI.md
 .agents
 .claude
 target/
+local/

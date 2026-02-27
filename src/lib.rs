@@ -6,6 +6,7 @@
 pub mod eigen;
 pub mod mkl;
 pub mod petsc;
+pub mod psblas;
 
 use std::fs::File;
 use std::io::BufRead;
