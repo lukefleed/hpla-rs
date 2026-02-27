@@ -16,32 +16,14 @@ from pathlib import Path
 sys.stderr.close()
 sys.stderr = _old_stderr
 
-# Modern Supercomputing Academic Style (LaTeX / IEEE / ACM)
 plt.style.use('seaborn-v0_8-whitegrid')
 plt.rcParams.update({
     'font.size': 12,
     'font.family': 'serif',
     'font.serif': ['Computer Modern Roman', 'Times New Roman', 'DejaVu Serif', 'serif'],
-    # Optionally enable pure LaTeX rendering if a local TeX distribution exists
     # 'text.usetex': True 
 })
 
-# Color and Hatch mapping for consistent backend representation (Colorblind + B/W Print friendly)
-COLOR_MAP = {
-    'faer/csc': '#d62728',         # Muted Red
-    'eigen/csc_map': '#1f77b4',    # Muted Blue
-    'petsc/csr_inodes': '#2ca02c', # Muted Green
-    'petsc/csr_raw': '#98df8a',    # Light Green
-    'mkl/csr_ie': '#9467bd'        # Muted Purple
-}
-
-HATCH_MAP = {
-    'faer/csc': '//',
-    'eigen/csc_map': '\\\\',
-    'petsc/csr_inodes': '..',
-    'petsc/csr_raw': '',
-    'mkl/csr_ie': 'xx'
-}
 
 def load_data(criterion_path):
     data = []
@@ -73,19 +55,19 @@ def load_data(criterion_path):
                     with open(est_file, 'r') as f:
                         est_data = json.load(f)
                         
-                    bytes_processed = bench_data.get('throughput', {}).get('Bytes', 0)
+                    elements_processed = bench_data.get('throughput', {}).get('Elements', 0)
                     time_ns = est_data.get('mean', {}).get('point_estimate', 0)
                     
-                    if bytes_processed > 0 and time_ns > 0:
-                        # throughput = bytes / seconds -> GiB/s
+                    if elements_processed > 0 and time_ns > 0:
+                        # throughput = elements / seconds -> GFLOP/s
                         time_s = time_ns * 1e-9
-                        bytes_per_sec = bytes_processed / time_s
-                        gib_per_sec = bytes_per_sec / (1024**3)
+                        elements_per_sec = elements_processed / time_s
+                        gflops_per_sec = elements_per_sec / 1e9
                         
                         data.append({
                             'Matrix': matrix_name,
                             'Configuration': full_config,
-                            'Throughput (GiB/s)': gib_per_sec
+                            'Throughput (GFLOP/s)': gflops_per_sec
                         })
     return pd.DataFrame(data)
 
@@ -109,22 +91,22 @@ def generate_plots(df, output_dir):
         
         # Pure matplotlib bar chart to avoid seaborn/scipy/numpy binary conflicts in Intel Python
         x_pos = np.arange(len(matrix_df))
+        
+        # Use default color cycle
+        colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+        bar_colors = [colors[i % len(colors)] for i in range(len(matrix_df))]
+        
         bars = plt.bar(
             x_pos, 
-            matrix_df['Throughput (GiB/s)'],
-            color=[COLOR_MAP.get(cfg, '#95a5a6') for cfg in matrix_df['Configuration']],
+            matrix_df['Throughput (GFLOP/s)'],
+            color=bar_colors,
             edgecolor='black',
             linewidth=1.2,
             zorder=3
         )
-        
-        # Apply hatch patterns for B/W printing clarity
-        for i, bar in enumerate(bars):
-            cfg = matrix_df['Configuration'].iloc[i]
-            bar.set_hatch(HATCH_MAP.get(cfg, ''))
 
-        plt.title(f'SpGEMV Memory Performance on {matrix}', pad=15, fontsize=14)
-        plt.ylabel('Memory Throughput (GiB/s)', labelpad=10, fontsize=12)
+        plt.title(f'SpGEMV Computational Performance on {matrix}', pad=15, fontsize=14)
+        plt.ylabel('Computational Throughput (GFLOP/s)', labelpad=10, fontsize=12)
         
         # Annotate bars with exact values
         for bar in bars:
@@ -141,7 +123,7 @@ def generate_plots(df, output_dir):
         plt.grid(axis='y', linestyle='--', alpha=0.5, zorder=0)
         plt.gca().spines['top'].set_visible(False)
         plt.gca().spines['right'].set_visible(False)
-        plt.ylim(0, df['Throughput (GiB/s)'].max() * 1.15) # Dynamic Y limit based on global max
+        plt.ylim(0, df['Throughput (GFLOP/s)'].max() * 1.15) # Dynamic Y limit based on global max
         
         # Format the X-axis labels to look cleaner in print
         formatted_labels = [cfg.replace('/', '\n') for cfg in matrix_df['Configuration']]

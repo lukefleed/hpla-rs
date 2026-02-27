@@ -42,13 +42,17 @@ fn bench_spmv(c: &mut Criterion) {
 
         let mut group = c.benchmark_group(format!("spmv_{}", name));
 
-        // Setup Throughput purely for memory bandwidth or flop/s representation
+        // Setup Throughput for memory bandwidth or flop/s representation
         // For SpMV (y += A*x): 2*NNZ ops
         // Bandwidth: (rows+1)*4 + nnz*4 + nnz*8 + cols*8 + rows*16 (read y + write y)
-        let bytes =
-            ((raw.nrows + 1) * 4 + raw.nnz * 4 + raw.nnz * 8 + raw.ncols * 8 + raw.nrows * 16)
-                as u64;
-        group.throughput(Throughput::Bytes(bytes));
+        // let bytes =
+        //     ((raw.nrows + 1) * 4 + raw.nnz * 4 + raw.nnz * 8 + raw.ncols * 8 + raw.nrows * 16)
+        //         as u64;
+        // group.throughput(Throughput::Bytes(bytes));
+
+        // Setup Throughput for computational performance (GFLOP/s)
+        // For SpMV (y += A*x), we perform one multiply and one add per non-zero: 2*NNZ FLOPs.
+        group.throughput(Throughput::Elements(2 * raw.nnz as u64));
 
         // ----------------------------------------------------
         // Faer
