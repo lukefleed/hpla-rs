@@ -15,7 +15,6 @@ typedef struct {
     Eigen::Map<const Eigen::SparseMatrix<double, Eigen::ColMajor, int32_t>>* A;
     Eigen::VectorXd* x;
     Eigen::VectorXd* y;
-    Eigen::VectorXd* y_init;
 } EigenBenchContext;
 
 EigenBenchContext* libeigen_spmv_setup(
@@ -37,11 +36,7 @@ EigenBenchContext* libeigen_spmv_setup(
     ctx->x->setConstant(1.0);
 
     ctx->y = new Eigen::VectorXd(nrows);
-    ctx->y_init = new Eigen::VectorXd(nrows);
-    
-    for (int32_t i = 0; i < nrows; ++i) {
-        (*(ctx->y_init))(i) = (double)i * 1e-9;
-    }
+    ctx->y->setZero();
 
     return ctx;
 }
@@ -55,7 +50,6 @@ void libeigen_spmv_teardown(EigenBenchContext* ctx) {
     delete ctx->A;
     delete ctx->x;
     delete ctx->y;
-    delete ctx->y_init;
     delete ctx;
 }
 

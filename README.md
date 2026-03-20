@@ -1,71 +1,115 @@
-# SpMV Benchmark 
+# hpla-rs — Single-Threaded SpMV Benchmark Suite
 
-## How to Run
+A benchmarking framework for comparing Sparse Matrix-Vector multiplication (`y += A*x`) across Rust and C/C++/Fortran libraries under strictly identical, single-threaded conditions. Designed for publication in an international supercomputing journal.
 
-1. Ensure PETSc is installed via Spack.
+## Backends
 
-   ```bash
-   spack install petsc \~mpi \~hdf5 \~superlu-dist \~mumps \~suite-sparse \~scalapack \~strumpack \~ptscotch \~hwloc \~X cflags='-g -O3 -march=native -mtune=native -flto' cxxflags='-g -O3 -march=native -mtune=native -flto' fflags='-g -O3 -march=native -mtune=native -flto -ffree-line-length-none'
-   ```   
+| Configuration | Library | Format | Language |
+|---------------|---------|--------|----------|
+| `faer/csc` | [Faer](https://github.com/sarah-quinones/faer-rs) | CSC | Rust |
+| `petsc/csr_inodes` | [PETSc](https://petsc.org/) | CSR + Inode optimization | C |
+| `petsc/csr_raw` | [PETSc](https://petsc.org/) | CSR scalar | C |
+| `eigen/csc_map` | [Eigen](https://eigen.tuxfamily.org/) | CSC via `Eigen::Map` | C++ |
+| `mkl/csr_ie` | [Intel oneMKL](https://www.intel.com/content/www/us/en/developer/tools/oneapi/onemkl.html) | CSR Inspection-Execution | C |
+| `psblas/csr` | [PSBLAS](https://github.com/sfilippone/psblas3) | CSR via Fortran C bindings | C++/Fortran |
 
-2. Ensure Eigen is installed via Spack
+## Prerequisites
 
-   ```bash
-   spack install eigen
-   ```
-
-3. Ensure Intel MKL is installed via Spack
-
-   ```bash
-   spack install intel-oneapi-mkl
-   ```
-
-4. Download some matrices from the Sparse Matrix Collection. For example [`atmosmood.mtx`](https://sparse.tamu.edu/Bourchtein/atmosmodd) and [`thermal2.mtx`](https://sparse.tamu.edu/Schmid/thermal2)
-
-   ```bash
-   mkdir matrices
-   cd matrices
-   wget https://suitesparse-collection-website.herokuapp.com/MM/Bourchtein/atmosmodd.tar.gz
-   wget https://suitesparse-collection-website.herokuapp.com/MM/Schmid/thermal2.tar.gz
-   tar -xvf atmosmodd.tar.gz
-   tar -xvf thermal2.tar.gz
-   ```   
-
-5. Load the necessary environments and build the PSBLAS C/C++ wrappers:
-
-   ```bash
-   source ~/.cargo/env
-   source ~/spack/share/spack/setup-env.sh
-   spack load intel-oneapi-mkl
-   spack load openmpi
-   
-   # Build PSBLAS locally using Clang with LTO and Position Independent Code
-   bash build_psblas.sh
-   ```
-
-6. Execute the benchmarking suite in a strictly isolated, single-threaded SOTA environment:
-
-   ```bash
-   cargo check --all-targets --all-features
-   taskset -c 0 cargo bench 
-   ```
-
-Criterion will automatically measure cycle-accurate timings and generate plots/reports in the `target/criterion/` directory. You can also plot with
+All external dependencies are managed through [Spack](https://spack.io/).
 
 ```bash
-cd python
-python3 plot.py
+# PETSc (serial, no optional solvers, LTO-enabled)
+spack install petsc ~mpi ~hdf5 ~superlu-dist ~mumps ~suite-sparse ~scalapack \
+    ~strumpack ~ptscotch ~hwloc ~X \
+    cflags='-O3 -march=native -mtune=native -flto' \
+    cxxflags='-O3 -march=native -mtune=native -flto' \
+    fflags='-O3 -march=native -mtune=native -flto -ffree-line-length-none'
+
+# Eigen (header-only)
+spack install eigen
+
+# Intel MKL
+spack install intel-oneapi-mkl
+
+# OpenMPI (required by PSBLAS)
+spack install openmpi
 ```
 
-## Benchmarks Configuration
+Download test matrices from the [SuiteSparse Matrix Collection](https://sparse.tamu.edu/):
 
-The `cargo bench` suite compares different libraries performing the Sparse General Matrix-Vector (SpGEMV) multiplication: `y += A * x`. All external backends are compiled via Clang/LLVM with `-O3 -march=native -ffast-math -flto` to ensure maximal SIMD autovectorization and operate via a Zero-Copy memory interface.
+```bash
+mkdir -p matrices && cd matrices
+# Example: atmosmodd (1.27M rows, 8.8M nnz) and thermal2 (1.23M rows, 8.6M nnz)
+for m in Bourchtein/atmosmodd Schmid/thermal2; do
+    wget "https://suitesparse-collection-website.herokuapp.com/MM/${m}.tar.gz"
+done
+for f in *.tar.gz; do tar xf "$f" --strip-components=1; done
+rm -f *.tar.gz
+cd ..
+```
 
-The harness evaluates the following configurations:
+## Building PSBLAS
 
-* **`faer/csc`**: Native pure-Rust implementation using [Faer](https://github.com/sarah-quinones/faer-rs). It iterates directly over a standard Compressed Sparse Column (CSC) memory layout using safe Rust accumulators (`y.write(...)`).
-* **`petsc/csr_inodes`**: C FFI bindings to [PETSc](https://petsc.org/). It uses a Compressed Sparse Row (CSR) layout with the **Inode** kernel optimization enabled (`MatCreateSeqAIJWithArrays`). This dynamically scans the matrix structure at runtime to find identical non-zero patterns across adjacent rows, grouping them to apply aggressive compiler unrolling and SIMD vectorization.
-* **`petsc/csr_raw`**: C FFI bindings to PETSc. It operates on the same CSR layout but explicitly forces the Inode routine off (scalar `MatMultAdd`). This is useful to measure the precise impact of the Inode heuristic vs the baseline C loop.
-* **`eigen/csc_map`**: C++ FFI bindings to [Eigen](https://eigen.tuxfamily.org/). Uses an `Eigen::Map` to project the CSC memory buffer into an `Eigen::SparseMatrix` without copies. The multiplication is evaluated purely via C++ Template Expressions (`*y += (*A) * (*x);`).
-* **`mkl/csr_ie`**: C FFI bindings to [Intel oneMKL](https://www.intel.com/content/www/us/en/developer/tools/oneapi/onemkl.html) Sparse BLAS. Uses the  Inspection-Execution API (`mkl_sparse_d_create_csr`, `mkl_sparse_optimize`) over a CSR layout. This routine heuristically inspects the matrix topology ahead of time, rearranging its representation internally to map perfectly onto the CPU's L1/L2 caches and AVX-512 FMA registers before invoking `mkl_sparse_d_mv`.
-* **`psblas/csr`**: C++ FFI bindings to [PSBLAS](https://github.com/sfilippone/psblas3) (Parallel Sparse BLAS). This framework handles both serial and parallel environments, internally executing OpenMPI. To preserve L3 Cache coherency on a single-node run, CPU affinity is programmatically locked via `sched_setaffinity` overriding MPI setup daemons, ensuring an exact cycle-accurate comparison with serial libraries.
+[PSBLAS](https://github.com/sfilippone/psblas3) is not available via spack and must be built locally. A script is provided:
+
+```bash
+source ~/.cargo/env
+source ~/spack/share/spack/setup-env.sh
+spack load intel-oneapi-mkl openmpi
+bash build_psblas.sh
+```
+
+This clones the repo into `resources/psblas3/`, builds with cmake (Clang + LTO + fPIC), and installs static libraries into `local/psblas3/`. See [PSBLAS documentation](https://psctoolkit.github.io/products/psblas/) for details.
+
+## Build and Run
+
+```bash
+# Load environment
+source ~/.cargo/env
+source ~/spack/share/spack/setup-env.sh
+spack load intel-oneapi-mkl openmpi
+
+# Verify compilation
+cargo check --all-targets
+
+# Run benchmarks (single-threaded, pinned to core 0)
+taskset -c 0 cargo bench
+```
+
+Results are written to `target/criterion/`. Generate plots with:
+
+```bash
+cd python && python3 plot.py
+```
+
+## Architecture
+
+### Zero-Copy FFI
+
+All backends operate on the same raw memory buffers (`row_ptr`, `col_idx`, `values`) allocated once by Rust. PETSc uses `MatCreateSeqAIJWithArrays`, Eigen uses `Eigen::Map`, and MKL uses `mkl_sparse_d_create_csr` — all zero-copy projections of the same data.
+
+### Cross-Language LTO
+
+Both `rustc` and `clang` emit LLVM IR. By compiling C/C++ wrappers with `-flto` and configuring Cargo with `lto = "fat"`, the LLVM linker treats the Rust caller and C/C++ kernels as a single compilation unit. This eliminates ABI call overhead by inlining FFI wrappers directly into the benchmark loop.
+
+### Benchmark Methodology
+
+The Criterion harness runs 100 samples per backend with 3 s warm-up and 8 s measurement, using `Throughput::Elements(2 * nnz)` to report GFLOP/s (one multiply + one add per nonzero).
+
+All backends accumulate `y += A*x` without resetting `y` between iterations. This measures the kernel in steady-state without injecting a `memcpy` into the hot path. `criterion::black_box` is applied only to the Faer backend (pure Rust in the same LTO unit); FFI backends are inherently opaque to LLVM's dead code elimination.
+
+### Compiler Profile
+
+| Setting | Value |
+|---------|-------|
+| C/C++ flags | `-O3 -march=native -ffast-math -flto` |
+| `opt-level` | `3` |
+| `codegen-units` | `1` |
+| `lto` | `"fat"` |
+| `panic` | `"abort"` |
+| CPU affinity | `taskset -c 0` |
+| Threading | `OMP_NUM_THREADS=1` |
+
+## License
+
+MIT

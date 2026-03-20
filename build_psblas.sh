@@ -1,38 +1,39 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+# Build PSBLAS 3 from source into local/psblas3/.
+#
+# PSBLAS is not available via spack, so we build it locally with the same
+# compiler flags used for the other backends (Clang + LTO + fPIC for Rust
+# static linking).
+#
+# Prerequisites:
+#   source ~/.cargo/env
+#   source ~/spack/share/spack/setup-env.sh
+#   spack load intel-oneapi-mkl openmpi
+#
+# References:
+#   https://github.com/sfilippone/psblas3
+#   https://psctoolkit.github.io/products/psblas/
 
-# Load environments
-source ~/.cargo/env
-source ~/spack/share/spack/setup-env.sh
+set -euo pipefail
 
-# We must ensure MPI is loaded before running cmake if Spack provides it
-# For PSBLAS 3, you also need BLAS/LAPACK. We'll use the ones provided by Intel MKL
-spack load intel-oneapi-mkl
-spack load openmpi || echo "Warning: Ensure MPI is available"
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+SRC_DIR="${REPO_ROOT}/resources/psblas3"
+BUILD_DIR="${SRC_DIR}/build"
+INSTALL_DIR="${REPO_ROOT}/local/psblas3"
 
-# If doesn't exist, create a directory called resources/psblas3 and clone psblas3 into it
-if [ ! -d "resources/psblas3" ]; then
-    mkdir -p resources
-    cd resources
-    git clone https://github.com/sfilippone/psblas3.git
-    cd ..
+# Clone if not present
+if [ ! -d "${SRC_DIR}" ]; then
+    echo "==> Cloning PSBLAS 3"
+    git clone --depth 1 https://github.com/sfilippone/psblas3.git "${SRC_DIR}"
 fi
 
-# Directory definitions
-SRC_DIR="$(pwd)/resources/psblas3"
-BUILD_DIR="$SRC_DIR/build"
-INSTALL_DIR="$(pwd)/local/psblas3"
+# Clean previous build
+rm -rf "${BUILD_DIR}"
+mkdir -p "${BUILD_DIR}" "${INSTALL_DIR}"
 
-# Clean up any existing build
-rm -rf "$BUILD_DIR"
-mkdir -p "$BUILD_DIR"
-mkdir -p "$INSTALL_DIR"
-
-cd "$BUILD_DIR"
-
-echo # Configure with optimized flags matching Spack defaults for other libraries + fPIC for Rust static linkage
-cmake .. \
-    -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR" \
+echo "==> Configuring PSBLAS (install to ${INSTALL_DIR})"
+cmake -S "${SRC_DIR}" -B "${BUILD_DIR}" \
+    -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
     -DCMAKE_BUILD_TYPE=Release \
     -DENABLE_DOCS=OFF \
     -DENABLE_SERIAL=ON \
@@ -41,14 +42,14 @@ cmake .. \
     -DCMAKE_C_COMPILER=clang \
     -DCMAKE_CXX_COMPILER=clang++ \
     -DCMAKE_Fortran_COMPILER=gfortran \
-    -DCMAKE_C_FLAGS="-g -O3 -march=native -mtune=native -flto -fPIC" \
-    -DCMAKE_CXX_FLAGS="-g -O3 -march=native -mtune=native -flto -fPIC" \
-    -DCMAKE_Fortran_FLAGS="-g -O3 -march=native -mtune=native -ffree-line-length-none -frecursive -fPIC"
+    -DCMAKE_C_FLAGS="-O3 -march=native -ffast-math -flto -fPIC" \
+    -DCMAKE_CXX_FLAGS="-O3 -march=native -ffast-math -flto -fPIC" \
+    -DCMAKE_Fortran_FLAGS="-O3 -march=native -ffree-line-length-none -frecursive -fPIC"
 
-echo "Compiling PSBLAS..."
-make -j$(nproc)
+echo "==> Building PSBLAS"
+cmake --build "${BUILD_DIR}" -j"$(nproc)"
 
-echo "Installing PSBLAS to $INSTALL_DIR..."
-make install
+echo "==> Installing"
+cmake --install "${BUILD_DIR}"
 
-echo "PSBLAS compilation complete. Installation located at $INSTALL_DIR"
+echo "==> Done. Libraries: $(ls "${INSTALL_DIR}/lib/"*.a 2>/dev/null | wc -l) static archives"

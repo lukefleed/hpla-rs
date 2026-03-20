@@ -107,7 +107,7 @@ def generate_plots(df, output_dir):
             zorder=3
         )
 
-        plt.title(f'SpGEMV Performance on {matrix}', pad=15, fontsize=14)
+        plt.title(f'SpMV Performance on {matrix}', pad=15, fontsize=14)
         plt.ylabel('Throughput (GFLOP/s)', labelpad=10, fontsize=12)
         
         # Annotate bars with exact values

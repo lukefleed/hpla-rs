@@ -13,12 +13,12 @@ typedef struct {
 } MKLBenchContext;
 
 MKLBenchContext* libmkl_spmv_setup(
-    int32_t nrows, 
-    int32_t ncols, 
+    int32_t nrows,
+    int32_t ncols,
     int32_t nnz,
-    int32_t *row_ptr, 
-    int32_t *col_idx, 
-    double *values
+    const int32_t *row_ptr,
+    const int32_t *col_idx,
+    const double *values
 ) {
     MKLBenchContext* ctx = (MKLBenchContext*)malloc(sizeof(MKLBenchContext));
     if (!ctx) return NULL;
@@ -37,14 +37,14 @@ MKLBenchContext* libmkl_spmv_setup(
     // 1. Create CSR handle (Zero-Copy projection of Rust memory)
     // MKL uses 0-based indexing by default (SPARSE_INDEX_BASE_ZERO)
     sparse_status_t status = mkl_sparse_d_create_csr(
-        &ctx->A, 
-        SPARSE_INDEX_BASE_ZERO, 
-        nrows, 
-        ncols, 
-        row_ptr, 
-        row_ptr + 1, 
-        col_idx, 
-        values
+        &ctx->A,
+        SPARSE_INDEX_BASE_ZERO,
+        nrows,
+        ncols,
+        (MKL_INT*)row_ptr,
+        (MKL_INT*)(row_ptr + 1),
+        (MKL_INT*)col_idx,
+        (double*)values
     );
 
     if (status != SPARSE_STATUS_SUCCESS) {

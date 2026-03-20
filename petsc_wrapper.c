@@ -14,7 +14,6 @@ typedef struct {
     Mat A;
     Vec x;
     Vec y;
-    Vec y_init;
     int32_t nrows;
     int32_t ncols;
     int32_t nnz;
@@ -45,16 +44,9 @@ PetscBenchContext* libpetsc_spmv_setup(
     // Create Vectors
     VecCreateSeq(PETSC_COMM_SELF, ncols, &ctx->x);
     VecCreateSeq(PETSC_COMM_SELF, nrows, &ctx->y);
-    VecDuplicate(ctx->y, &ctx->y_init);
-
-    // Initialize vectors (same logic as before: x=1.0, y_init=i*1e-9)
+    // Initialize vectors (x=1.0, y=0.0)
     VecSet(ctx->x, 1.0);
-    PetscScalar *yarr;
-    VecGetArray(ctx->y_init, &yarr);
-    for (int32_t i = 0; i < nrows; i++) {
-        yarr[i] = (PetscScalar)i * 1e-9;
-    }
-    VecRestoreArray(ctx->y_init, &yarr);
+    VecSet(ctx->y, 0.0);
 
     // Create Matrix from raw CSR
     /*
@@ -79,7 +71,6 @@ void libpetsc_spmv_teardown(PetscBenchContext* ctx) {
     MatDestroy(&ctx->A);
     VecDestroy(&ctx->x);
     VecDestroy(&ctx->y);
-    VecDestroy(&ctx->y_init);
     free(ctx);
     // PetscFinalize can be called at the very end of the rust program
 }

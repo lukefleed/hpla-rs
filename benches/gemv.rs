@@ -1,9 +1,9 @@
-//! Criterion benchmarking harness for SpMV.
+//! Criterion benchmarking harness for single-threaded SpMV (y += A*x).
 //!
 //! Iterates over all `.mtx` matrices in the `matrices/` directory,
-//! sets up the exact same raw memory structures, and executes
-//! Faer (CSC) and PETSc (CSR) back-to-back to guarantee perfectly
-//! isolated, cycle-accurate performance comparisons.
+//! sets up the exact same raw memory structures, and benchmarks all
+//! backends (Faer, PETSc, Eigen, MKL, PSBLAS) under identical conditions
+//! for cycle-accurate performance comparisons.
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use faer::col::Col;
@@ -37,6 +37,10 @@ fn get_matrices() -> Vec<PathBuf> {
 fn bench_spmv(c: &mut Criterion) {
     let matrices = get_matrices();
 
+    // METHODOLOGY: All backends accumulate y += A*x without resetting y between
+    // Criterion iterations. This is intentional — it measures the kernel in
+    // steady-state without injecting a memcpy into the hot path. The values in y
+    // do not affect SpMV cost (memory-bound, same access pattern regardless).
     for path in matrices {
         let name = path.file_stem().unwrap().to_string_lossy().to_string();
         let raw = load_mtx_raw(&path).expect("Failed to load matrix");
@@ -64,10 +68,11 @@ fn bench_spmv(c: &mut Criterion) {
         let y_init_faer: Col<f64> = Col::from_fn(raw.nrows, |i| (i as f64) * 1e-9);
         let mut y_faer = y_init_faer.clone();
 
+        // NOTE: black_box is only needed for Faer because it is pure Rust compiled
+        // in the same LTO unit — LLVM could theoretically DCE the result. FFI backends
+        // (PETSc, Eigen, MKL, PSBLAS) are opaque barriers that prevent DCE inherently.
         group.bench_with_input(BenchmarkId::new("faer", "csc"), &(), |b, _| {
             b.iter(|| {
-                // We compute y = A*x + y (Accum::Add / MatMultAdd) without copying y_init overhead
-                // inside this loop to preserve cache and match theoretical limits precisely.
                 spmv_faer(&a_faer, &x_faer, &mut y_faer);
                 criterion::black_box(&mut y_faer);
             });

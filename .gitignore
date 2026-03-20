@@ -1,8 +1,9 @@
 rust-faer/target
 matrices/
 resources/
-GEMINI.md
 .agents
 .claude
 target/
 local/
+CLAUDE.md
+docs/

@@ -59,11 +59,14 @@ fn main() {
     // ----------------------------------------------------
     // C++ Eigen compilation
     // ----------------------------------------------------
-    let eigen_dir = PathBuf::from("resources/eigen");
+    let eigen_dir = PathBuf::from(
+        String::from_utf8_lossy(&eigen_output.stdout).trim(),
+    );
+    let eigen_include = eigen_dir.join("include/eigen3");
     cc::Build::new()
         .cpp(true)
         .file("eigen_wrapper.cpp")
-        .include(eigen_dir)
+        .include(eigen_include)
         .compiler("clang++")
         .flag("-O3")
         .flag("-march=native")
@@ -75,10 +78,22 @@ fn main() {
     // ----------------------------------------------------
     // C Intel MKL compilation
     // ----------------------------------------------------
-    // Using the explicit Spack MKL path provided by the user
-    let mkl_prefix = PathBuf::from("/roberto/llombardo/spack/opt/spack/linux-icelake/intel-oneapi-mkl-2024.2.2-3yphy2srhn5noy4jw7njcwotmjszg3ap");
-    let mkl_include = mkl_prefix.join("mkl/2024.2/include");
-    let mkl_lib = mkl_prefix.join("mkl/2024.2/lib");
+    let mkl_output = Command::new("spack")
+        .args(["location", "-i", "intel-oneapi-mkl"])
+        .output()
+        .expect("Failed to execute spack command for MKL. Is spack sourced & in your PATH?");
+
+    if !mkl_output.status.success() {
+        panic!(
+            "spack location -i intel-oneapi-mkl failed. Make sure MKL is installed via Spack.\nError: {}",
+            String::from_utf8_lossy(&mkl_output.stderr)
+        );
+    }
+    let mkl_prefix = PathBuf::from(
+        String::from_utf8_lossy(&mkl_output.stdout).trim(),
+    );
+    let mkl_include = mkl_prefix.join("mkl/latest/include");
+    let mkl_lib = mkl_prefix.join("mkl/latest/lib");
 
     println!("cargo::rustc-link-search=native={}", mkl_lib.display());
     // MKL Sequential Single-Threaded Link Line
