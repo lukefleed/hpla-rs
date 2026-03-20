@@ -87,3 +87,91 @@ void libmkl_spmv_teardown(MKLBenchContext* ctx) {
         free(ctx);
     }
 }
+
+/* ------------------------------------------------------------------ */
+/*  CSC variant — Inspection-Execution API with CSC input format      */
+/* ------------------------------------------------------------------ */
+
+typedef struct {
+    sparse_matrix_t A;
+    struct matrix_descr descr;
+    int32_t nrows;
+    int32_t ncols;
+    int32_t nnz;
+    double* x;
+    double* y;
+} MKLCscBenchContext;
+
+MKLCscBenchContext* libmkl_csc_spmv_setup(
+    int32_t nrows,
+    int32_t ncols,
+    int32_t nnz,
+    const int32_t *col_ptr,
+    const int32_t *row_idx,
+    const double *values
+) {
+    MKLCscBenchContext* ctx = (MKLCscBenchContext*)malloc(sizeof(MKLCscBenchContext));
+    if (!ctx) return NULL;
+
+    ctx->nrows = nrows;
+    ctx->ncols = ncols;
+    ctx->nnz = nnz;
+
+    ctx->x = (double*)mkl_malloc(ncols * sizeof(double), 64);
+    ctx->y = (double*)mkl_malloc(nrows * sizeof(double), 64);
+
+    for (int i=0; i<ncols; ++i) ctx->x[i] = 1.0;
+    for (int i=0; i<nrows; ++i) ctx->y[i] = i * 1e-9;
+
+    // 1. Create CSC handle (Zero-Copy projection of Rust memory)
+    sparse_status_t status = mkl_sparse_d_create_csc(
+        &ctx->A,
+        SPARSE_INDEX_BASE_ZERO,
+        nrows,
+        ncols,
+        (MKL_INT*)col_ptr,
+        (MKL_INT*)(col_ptr + 1),
+        (MKL_INT*)row_idx,
+        (double*)values
+    );
+
+    if (status != SPARSE_STATUS_SUCCESS) {
+        mkl_free(ctx->x);
+        mkl_free(ctx->y);
+        free(ctx);
+        return NULL;
+    }
+
+    // 2. Define Matrix Description
+    ctx->descr.type = SPARSE_MATRIX_TYPE_GENERAL;
+
+    // 3. Inspection-Execution Optimization
+    mkl_sparse_optimize(ctx->A);
+
+    return ctx;
+}
+
+void libmkl_csc_spmv_execute(MKLCscBenchContext* ctx) {
+    // y = alpha * A * x + beta * y
+    // alpha = 1.0, beta = 1.0  =>  y += A*x
+    mkl_sparse_d_mv(
+        SPARSE_OPERATION_NON_TRANSPOSE,
+        1.0,
+        ctx->A,
+        ctx->descr,
+        ctx->x,
+        1.0,
+        ctx->y
+    );
+}
+
+void libmkl_csc_spmv_teardown(MKLCscBenchContext* ctx) {
+    if (ctx) {
+        if (ctx->A) {
+            mkl_sparse_destroy(ctx->A);
+        }
+        if (ctx->x) mkl_free(ctx->x);
+        if (ctx->y) mkl_free(ctx->y);
+        free(ctx);
+    }
+}

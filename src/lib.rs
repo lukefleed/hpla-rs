@@ -233,6 +233,26 @@ mod tests {
             crate::psblas::libpsblas_spmv_teardown(ctx);
         }
 
+        // --- Eigen (CSR, cross-format control) ---
+        unsafe {
+            let ctx = crate::eigen::libeigen_csr_spmv_setup(
+                raw.nrows as i32, raw.ncols as i32, raw.nnz as i32,
+                raw.row_ptr.as_ptr(), raw.col_idx.as_ptr(), raw.values.as_ptr(),
+            );
+            crate::eigen::libeigen_csr_spmv_execute(ctx);
+            crate::eigen::libeigen_csr_spmv_teardown(ctx);
+        }
+
+        // --- MKL (CSC, cross-format control) ---
+        unsafe {
+            let ctx = crate::mkl::libmkl_csc_spmv_setup(
+                raw.nrows as i32, raw.ncols as i32, raw.nnz as i32,
+                raw.col_ptr.as_ptr(), raw.row_idx.as_ptr(), raw.csc_values.as_ptr(),
+            );
+            crate::mkl::libmkl_csc_spmv_execute(ctx);
+            crate::mkl::libmkl_csc_spmv_teardown(ctx);
+        }
+
         // Faer result is our reference — verify it has nonzero entries
         let faer_norm: f64 = faer_result.iter().map(|v| v * v).sum::<f64>().sqrt();
         assert!(

@@ -8,8 +8,14 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use faer::col::Col;
 use faer::sparse::SparseColMat;
-use hpla_rs::eigen::{libeigen_spmv_execute, libeigen_spmv_setup, libeigen_spmv_teardown};
-use hpla_rs::mkl::{libmkl_spmv_execute, libmkl_spmv_setup, libmkl_spmv_teardown};
+use hpla_rs::eigen::{
+    libeigen_csr_spmv_execute, libeigen_csr_spmv_setup, libeigen_csr_spmv_teardown,
+    libeigen_spmv_execute, libeigen_spmv_setup, libeigen_spmv_teardown,
+};
+use hpla_rs::mkl::{
+    libmkl_csc_spmv_execute, libmkl_csc_spmv_setup, libmkl_csc_spmv_teardown,
+    libmkl_spmv_execute, libmkl_spmv_setup, libmkl_spmv_teardown,
+};
 use hpla_rs::petsc::{libpetsc_spmv_execute, libpetsc_spmv_setup, libpetsc_spmv_teardown};
 use hpla_rs::psblas::{libpsblas_spmv_execute, libpsblas_spmv_setup, libpsblas_spmv_teardown};
 use hpla_rs::{load_mtx_raw, spmv_faer};
@@ -147,6 +153,28 @@ fn bench_spmv(c: &mut Criterion) {
         }
 
         // ----------------------------------------------------
+        // Intel MKL CSC (cross-format control)
+        // ----------------------------------------------------
+        unsafe {
+            let ctx = libmkl_csc_spmv_setup(
+                raw.nrows as i32,
+                raw.ncols as i32,
+                raw.nnz as i32,
+                raw.col_ptr.as_ptr(),
+                raw.row_idx.as_ptr(),
+                raw.csc_values.as_ptr(),
+            );
+
+            group.bench_with_input(BenchmarkId::new("mkl", "csc_ie"), &(), |b, _| {
+                b.iter(|| {
+                    libmkl_csc_spmv_execute(ctx);
+                });
+            });
+
+            libmkl_csc_spmv_teardown(ctx);
+        }
+
+        // ----------------------------------------------------
         // Eigen (C++ CSC)
         // ----------------------------------------------------
         unsafe {
@@ -166,6 +194,28 @@ fn bench_spmv(c: &mut Criterion) {
             });
 
             libeigen_spmv_teardown(ctx);
+        }
+
+        // ----------------------------------------------------
+        // Eigen (C++ CSR) — cross-format control
+        // ----------------------------------------------------
+        unsafe {
+            let ctx = libeigen_csr_spmv_setup(
+                raw.nrows as i32,
+                raw.ncols as i32,
+                raw.nnz as i32,
+                raw.row_ptr.as_ptr(),
+                raw.col_idx.as_ptr(),
+                raw.values.as_ptr(),
+            );
+
+            group.bench_with_input(BenchmarkId::new("eigen", "csr_map"), &(), |b, _| {
+                b.iter(|| {
+                    libeigen_csr_spmv_execute(ctx);
+                });
+            });
+
+            libeigen_csr_spmv_teardown(ctx);
         }
 
         // ----------------------------------------------------

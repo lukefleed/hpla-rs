@@ -24,3 +24,23 @@ unsafe extern "C" {
     pub fn libeigen_spmv_execute(ctx: *mut EigenBenchContext);
     pub fn libeigen_spmv_teardown(ctx: *mut EigenBenchContext);
 }
+
+/// Opaque struct representing the C++ side CSR internal context.
+#[repr(C)]
+pub struct EigenCsrBenchContext {
+    _private: [u8; 0],
+}
+
+unsafe extern "C" {
+    pub fn libeigen_csr_spmv_setup(
+        nrows: i32,
+        ncols: i32,
+        nnz: i32,
+        row_ptr: *const i32,
+        col_idx: *const i32,
+        values: *const c_double,
+    ) -> *mut EigenCsrBenchContext;
+
+    pub fn libeigen_csr_spmv_execute(ctx: *mut EigenCsrBenchContext);
+    pub fn libeigen_csr_spmv_teardown(ctx: *mut EigenCsrBenchContext);
+}

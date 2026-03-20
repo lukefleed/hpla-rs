@@ -10,7 +10,9 @@ A benchmarking framework for comparing Sparse Matrix-Vector multiplication (`y +
 | `petsc/csr_inodes` | [PETSc](https://petsc.org/) | CSR + Inode optimization | C |
 | `petsc/csr_raw` | [PETSc](https://petsc.org/) | CSR scalar | C |
 | `eigen/csc_map` | [Eigen](https://eigen.tuxfamily.org/) | CSC via `Eigen::Map` | C++ |
+| `eigen/csr_map` | [Eigen](https://eigen.tuxfamily.org/) | CSR via `Eigen::Map` (cross-format control) | C++ |
 | `mkl/csr_ie` | [Intel oneMKL](https://www.intel.com/content/www/us/en/developer/tools/oneapi/onemkl.html) | CSR Inspection-Execution | C |
+| `mkl/csc_ie` | [Intel oneMKL](https://www.intel.com/content/www/us/en/developer/tools/oneapi/onemkl.html) | CSC Inspection-Execution (cross-format control) | C |
 | `psblas/csr` | [PSBLAS](https://github.com/sfilippone/psblas3) | CSR via Fortran C bindings | C++/Fortran |
 
 ## Prerequisites
@@ -81,6 +83,21 @@ Results are written to `target/criterion/`. Generate plots with:
 ```bash
 cd python && python3 plot.py
 ```
+
+### Roofline Analysis
+
+To overlay a bandwidth ceiling on the plots, first measure single-core STREAM Triad bandwidth:
+
+```bash
+bash stream_bench.sh
+```
+
+This produces `python/hw_config.json` with the measured bandwidth. Then re-run `plot.py` — it will generate:
+- `python/gemv/roofline.png` — classic roofline (log-log) with all backends and matrices
+- Per-matrix bar charts with a dashed red bandwidth ceiling line
+
+The roofline uses a cold-cache compulsory traffic model:
+`AI = 2*nnz / ((nrows+1)*4 + nnz*12 + ncols*8 + nrows*16)` FLOP/byte.
 
 ## Architecture
 

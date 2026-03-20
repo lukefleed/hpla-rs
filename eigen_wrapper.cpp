@@ -53,4 +53,47 @@ void libeigen_spmv_teardown(EigenBenchContext* ctx) {
     delete ctx;
 }
 
+// Benchmark context holding Eigen objects (CSR / RowMajor)
+typedef struct {
+    Eigen::Map<const Eigen::SparseMatrix<double, Eigen::RowMajor, int32_t>>* A;
+    Eigen::VectorXd* x;
+    Eigen::VectorXd* y;
+} EigenCsrBenchContext;
+
+EigenCsrBenchContext* libeigen_csr_spmv_setup(
+    int32_t nrows,
+    int32_t ncols,
+    int32_t nnz,
+    const int32_t* row_ptr,
+    const int32_t* col_idx,
+    const double* values
+) {
+    EigenCsrBenchContext* ctx = new EigenCsrBenchContext;
+
+    // Map the raw CSR arrays into a const Eigen SparseMatrix (zero-copy)
+    ctx->A = new Eigen::Map<const Eigen::SparseMatrix<double, Eigen::RowMajor, int32_t>>(
+        nrows, ncols, nnz, row_ptr, col_idx, values
+    );
+
+    ctx->x = new Eigen::VectorXd(ncols);
+    ctx->x->setConstant(1.0);
+
+    ctx->y = new Eigen::VectorXd(nrows);
+    ctx->y->setZero();
+
+    return ctx;
+}
+
+void libeigen_csr_spmv_execute(EigenCsrBenchContext* ctx) {
+    // y += A * x
+    *(ctx->y) += (*(ctx->A)) * (*(ctx->x));
+}
+
+void libeigen_csr_spmv_teardown(EigenCsrBenchContext* ctx) {
+    delete ctx->A;
+    delete ctx->x;
+    delete ctx->y;
+    delete ctx;
+}
+
 } // extern "C"

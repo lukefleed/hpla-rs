@@ -5,5 +5,8 @@ resources/
 .claude
 target/
 local/
+python/hw_config.json
+python/gemv/
 CLAUDE.md
 docs/
+python/__pycache__/
