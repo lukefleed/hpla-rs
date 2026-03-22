@@ -1,3 +1,9 @@
+// PSBLAS FFI wrapper for SpMV benchmarking (Fortran via C bindings + MPI).
+// NOT zero-copy: elements inserted row-by-row via psb_c_dspins(), assembled
+// into internal CSR via psb_c_dspasb_opt(). Copy happens during setup only.
+// MPI initialized once; CPU affinity saved/restored around MPI_Init.
+// psb_c_exit NOT called — avoids MPI_Finalize so Criterion can loop matrices.
+
 #include "psb_base_cbind.h"
 #include <mpi.h>
 #include <sched.h>
@@ -135,12 +141,21 @@ libpsblas_spmv_setup(int nrows, int ncols, int nnz,
 }
 
 void libpsblas_spmv_execute(psblas_context_t *ctx) {
-  // y = 1.0 * A * x + 1.0 * y
-  // We use exactly 1.0 for alpha and 1.0 for beta as per benchmark standards
+  // y = alpha * A * x + beta * y
+  // alpha = 1.0, beta = 1.0  =>  y += A*x
   int info = psb_c_dspmm(1.0, ctx->ah, ctx->xh, 1.0, ctx->yh, ctx->cdh);
   if (info != 0) {
     fprintf(stderr, "[PSBLAS] Fatal: dspmm failed with %d\n", info);
   }
+}
+
+void libpsblas_spmv_get_y(psblas_context_t *ctx, double *out, int32_t len) {
+    // psb_c_dvect_f_get_pnt returns a raw pointer to the internal Fortran
+    // vector storage, avoiding an extra allocation + copy.
+    double *yptr = psb_c_dvect_f_get_pnt(ctx->yh);
+    int32_t nrows = psb_c_dvect_get_nrows(ctx->yh);
+    int32_t n = len < nrows ? len : nrows;
+    for (int32_t i = 0; i < n; i++) out[i] = yptr[i];
 }
 
 void libpsblas_spmv_teardown(psblas_context_t *ctx) {

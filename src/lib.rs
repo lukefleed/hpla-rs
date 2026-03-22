@@ -166,100 +166,277 @@ pub fn spmv_faer(a: &SparseColMat<u32, f64>, x: &Col<f64>, y: &mut Col<f64>) {
 mod tests {
     use super::*;
 
-    /// Verifies all backends execute SpMV without crashing and Faer produces
-    /// nonzero output. This proves to reviewers that all backends compute the
-    /// same operation on the same data.
+    /// Computes the relative L2 error between two vectors.
+    ///
+    /// Returns `||actual - reference||_2 / ||reference||_2`.
+    /// If the reference norm is zero, returns the absolute norm of the
+    /// difference instead.
+    fn relative_l2_error(actual: &[f64], reference: &[f64]) -> f64 {
+        let diff_norm: f64 = actual
+            .iter()
+            .zip(reference)
+            .map(|(a, r)| (a - r).powi(2))
+            .sum::<f64>()
+            .sqrt();
+        let ref_norm: f64 = reference.iter().map(|r| r.powi(2)).sum::<f64>().sqrt();
+        if ref_norm == 0.0 {
+            diff_norm
+        } else {
+            diff_norm / ref_norm
+        }
+    }
+
+    /// Checks all backends produce the same y = A*x (relative L2 error).
+    /// Runs on every .mtx in matrices/. PSBLAS has wider tolerance (1e-6)
+    /// because it copies data internally.
     #[test]
-    fn test_backend_numerical_equivalence() -> Result<(), String> {
-        let mut matrices: Vec<_> = std::fs::read_dir("matrices")
-            .map_err(|e| format!("cannot read matrices/: {}", e))?
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().is_some_and(|ext| ext == "mtx"))
-            .map(|e| e.path())
+    fn test_backend_numerical_equivalence() -> anyhow::Result<()> {
+        let mut matrices: Vec<_> = std::fs::read_dir("matrices")?
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry
+                    .path()
+                    .extension()
+                    .is_some_and(|ext| ext == "mtx")
+            })
+            .map(|entry| entry.path())
             .collect();
         matrices.sort();
 
-        let path = matrices.first().ok_or("no .mtx files found in matrices/")?;
-        let raw = load_mtx_raw(path)?;
+        anyhow::ensure!(!matrices.is_empty(), "no .mtx files found in matrices/");
 
-        // --- Faer (CSC) ---
-        let a_faer =
-            SparseColMat::try_new_from_triplets(raw.nrows, raw.ncols, &raw.triplets)
-                .map_err(|e| format!("faer: failed to build SparseColMat: {e:?}"))?;
-        let x_faer: Col<f64> = Col::from_fn(raw.ncols, |_| 1.0);
-        let mut y_faer: Col<f64> = Col::zeros(raw.nrows);
-        spmv_faer(&a_faer, &x_faer, &mut y_faer);
+        // Tolerance for zero-copy backends (PETSc, Eigen, MKL): floating-point
+        // reordering under -ffast-math can introduce small differences.
+        let tol_strict = 1e-10;
+        // PSBLAS assembles its own internal CSR from the input data, so
+        // accumulated rounding may be slightly larger.
+        let tol_psblas = 1e-6;
 
-        let faer_result: Vec<f64> = (0..raw.nrows).map(|i| y_faer[i]).collect();
+        for path in &matrices {
+            let name = path
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            eprintln!("\n=== {name} ===");
 
-        // --- PETSc (CSR, no inodes) ---
-        unsafe {
-            let ctx = crate::petsc::libpetsc_spmv_setup(
-                raw.nrows as i32, raw.ncols as i32, raw.nnz as i32,
-                raw.row_ptr.as_ptr(), raw.col_idx.as_ptr(), raw.values.as_ptr(),
-                1,
+            let raw = load_mtx_raw(path)
+                .map_err(|e| anyhow::anyhow!("load_mtx_raw({name}): {e}"))?;
+
+            // --- Faer reference (CSC) ---
+            let a_faer =
+                SparseColMat::try_new_from_triplets(raw.nrows, raw.ncols, &raw.triplets)
+                    .map_err(|e| anyhow::anyhow!("faer SparseColMat({name}): {e:?}"))?;
+            let x_faer: Col<f64> = Col::from_fn(raw.ncols, |_| 1.0);
+            let mut y_faer: Col<f64> = Col::zeros(raw.nrows);
+            spmv_faer(&a_faer, &x_faer, &mut y_faer);
+
+            let faer_ref: Vec<f64> = (0..raw.nrows).map(|i| y_faer[i]).collect();
+            let faer_norm: f64 = faer_ref.iter().map(|v| v * v).sum::<f64>().sqrt();
+            assert!(
+                faer_norm > 0.0,
+                "{name}: faer y is all zeros — matrix may be empty"
             );
-            crate::petsc::libpetsc_spmv_execute(ctx);
-            crate::petsc::libpetsc_spmv_teardown(ctx);
+
+            // --- PETSc (CSR, inodes disabled) ---
+            {
+                let mut y_buf = vec![0.0f64; raw.nrows];
+                unsafe {
+                    let ctx = crate::petsc::libpetsc_spmv_setup(
+                        raw.nrows as i32,
+                        raw.ncols as i32,
+                        raw.nnz as i32,
+                        raw.row_ptr.as_ptr(),
+                        raw.col_idx.as_ptr(),
+                        raw.values.as_ptr(),
+                        1, // disable inodes
+                    );
+                    crate::petsc::libpetsc_spmv_execute(ctx);
+                    crate::petsc::libpetsc_spmv_get_y(
+                        ctx,
+                        y_buf.as_mut_ptr(),
+                        raw.nrows as i32,
+                    );
+                    crate::petsc::libpetsc_spmv_teardown(ctx);
+                }
+                let err = relative_l2_error(&y_buf, &faer_ref);
+                eprintln!("  petsc/csr_raw:    rel L2 = {err:.2e}");
+                assert!(
+                    err < tol_strict,
+                    "{name}: petsc/csr_raw diverged: rel L2 = {err:.2e}"
+                );
+            }
+
+            // --- PETSc (CSR, inodes enabled) ---
+            {
+                let mut y_buf = vec![0.0f64; raw.nrows];
+                unsafe {
+                    let ctx = crate::petsc::libpetsc_spmv_setup(
+                        raw.nrows as i32,
+                        raw.ncols as i32,
+                        raw.nnz as i32,
+                        raw.row_ptr.as_ptr(),
+                        raw.col_idx.as_ptr(),
+                        raw.values.as_ptr(),
+                        0, // enable inodes
+                    );
+                    crate::petsc::libpetsc_spmv_execute(ctx);
+                    crate::petsc::libpetsc_spmv_get_y(
+                        ctx,
+                        y_buf.as_mut_ptr(),
+                        raw.nrows as i32,
+                    );
+                    crate::petsc::libpetsc_spmv_teardown(ctx);
+                }
+                let err = relative_l2_error(&y_buf, &faer_ref);
+                eprintln!("  petsc/csr_inodes: rel L2 = {err:.2e}");
+                assert!(
+                    err < tol_strict,
+                    "{name}: petsc/csr_inodes diverged: rel L2 = {err:.2e}"
+                );
+            }
+
+            // --- Eigen (CSC) ---
+            {
+                let mut y_buf = vec![0.0f64; raw.nrows];
+                unsafe {
+                    let ctx = crate::eigen::libeigen_spmv_setup(
+                        raw.nrows as i32,
+                        raw.ncols as i32,
+                        raw.nnz as i32,
+                        raw.col_ptr.as_ptr(),
+                        raw.row_idx.as_ptr(),
+                        raw.csc_values.as_ptr(),
+                    );
+                    crate::eigen::libeigen_spmv_execute(ctx);
+                    crate::eigen::libeigen_spmv_get_y(
+                        ctx,
+                        y_buf.as_mut_ptr(),
+                        raw.nrows as i32,
+                    );
+                    crate::eigen::libeigen_spmv_teardown(ctx);
+                }
+                let err = relative_l2_error(&y_buf, &faer_ref);
+                eprintln!("  eigen/csc_map:    rel L2 = {err:.2e}");
+                assert!(
+                    err < tol_strict,
+                    "{name}: eigen/csc_map diverged: rel L2 = {err:.2e}"
+                );
+            }
+
+            // --- Eigen (CSR, cross-format control) ---
+            {
+                let mut y_buf = vec![0.0f64; raw.nrows];
+                unsafe {
+                    let ctx = crate::eigen::libeigen_csr_spmv_setup(
+                        raw.nrows as i32,
+                        raw.ncols as i32,
+                        raw.nnz as i32,
+                        raw.row_ptr.as_ptr(),
+                        raw.col_idx.as_ptr(),
+                        raw.values.as_ptr(),
+                    );
+                    crate::eigen::libeigen_csr_spmv_execute(ctx);
+                    crate::eigen::libeigen_csr_spmv_get_y(
+                        ctx,
+                        y_buf.as_mut_ptr(),
+                        raw.nrows as i32,
+                    );
+                    crate::eigen::libeigen_csr_spmv_teardown(ctx);
+                }
+                let err = relative_l2_error(&y_buf, &faer_ref);
+                eprintln!("  eigen/csr_map:    rel L2 = {err:.2e}");
+                assert!(
+                    err < tol_strict,
+                    "{name}: eigen/csr_map diverged: rel L2 = {err:.2e}"
+                );
+            }
+
+            // --- MKL (CSR, Inspection-Execution) ---
+            {
+                let mut y_buf = vec![0.0f64; raw.nrows];
+                unsafe {
+                    let ctx = crate::mkl::libmkl_spmv_setup(
+                        raw.nrows as i32,
+                        raw.ncols as i32,
+                        raw.nnz as i32,
+                        raw.row_ptr.as_ptr(),
+                        raw.col_idx.as_ptr(),
+                        raw.values.as_ptr(),
+                    );
+                    crate::mkl::libmkl_spmv_execute(ctx);
+                    crate::mkl::libmkl_spmv_get_y(
+                        ctx,
+                        y_buf.as_mut_ptr(),
+                        raw.nrows as i32,
+                    );
+                    crate::mkl::libmkl_spmv_teardown(ctx);
+                }
+                let err = relative_l2_error(&y_buf, &faer_ref);
+                eprintln!("  mkl/csr_ie:       rel L2 = {err:.2e}");
+                assert!(
+                    err < tol_strict,
+                    "{name}: mkl/csr_ie diverged: rel L2 = {err:.2e}"
+                );
+            }
+
+            // --- MKL (CSC, Inspection-Execution, cross-format control) ---
+            {
+                let mut y_buf = vec![0.0f64; raw.nrows];
+                unsafe {
+                    let ctx = crate::mkl::libmkl_csc_spmv_setup(
+                        raw.nrows as i32,
+                        raw.ncols as i32,
+                        raw.nnz as i32,
+                        raw.col_ptr.as_ptr(),
+                        raw.row_idx.as_ptr(),
+                        raw.csc_values.as_ptr(),
+                    );
+                    crate::mkl::libmkl_csc_spmv_execute(ctx);
+                    crate::mkl::libmkl_csc_spmv_get_y(
+                        ctx,
+                        y_buf.as_mut_ptr(),
+                        raw.nrows as i32,
+                    );
+                    crate::mkl::libmkl_csc_spmv_teardown(ctx);
+                }
+                let err = relative_l2_error(&y_buf, &faer_ref);
+                eprintln!("  mkl/csc_ie:       rel L2 = {err:.2e}");
+                assert!(
+                    err < tol_strict,
+                    "{name}: mkl/csc_ie diverged: rel L2 = {err:.2e}"
+                );
+            }
+
+            // --- PSBLAS (CSR) ---
+            {
+                let mut y_buf = vec![0.0f64; raw.nrows];
+                unsafe {
+                    let ctx = crate::psblas::libpsblas_spmv_setup(
+                        raw.nrows as i32,
+                        raw.ncols as i32,
+                        raw.nnz as i32,
+                        raw.row_ptr.as_ptr(),
+                        raw.col_idx.as_ptr(),
+                        raw.values.as_ptr(),
+                    );
+                    crate::psblas::libpsblas_spmv_execute(ctx);
+                    crate::psblas::libpsblas_spmv_get_y(
+                        ctx,
+                        y_buf.as_mut_ptr(),
+                        raw.nrows as i32,
+                    );
+                    crate::psblas::libpsblas_spmv_teardown(ctx);
+                }
+                let err = relative_l2_error(&y_buf, &faer_ref);
+                eprintln!("  psblas/csr:       rel L2 = {err:.2e}");
+                assert!(
+                    err < tol_psblas,
+                    "{name}: psblas/csr diverged: rel L2 = {err:.2e}"
+                );
+            }
         }
 
-        // --- Eigen (CSC) ---
-        unsafe {
-            let ctx = crate::eigen::libeigen_spmv_setup(
-                raw.nrows as i32, raw.ncols as i32, raw.nnz as i32,
-                raw.col_ptr.as_ptr(), raw.row_idx.as_ptr(), raw.csc_values.as_ptr(),
-            );
-            crate::eigen::libeigen_spmv_execute(ctx);
-            crate::eigen::libeigen_spmv_teardown(ctx);
-        }
-
-        // --- MKL (CSR) ---
-        unsafe {
-            let ctx = crate::mkl::libmkl_spmv_setup(
-                raw.nrows as i32, raw.ncols as i32, raw.nnz as i32,
-                raw.row_ptr.as_ptr(), raw.col_idx.as_ptr(), raw.values.as_ptr(),
-            );
-            crate::mkl::libmkl_spmv_execute(ctx);
-            crate::mkl::libmkl_spmv_teardown(ctx);
-        }
-
-        // --- PSBLAS (CSR) ---
-        unsafe {
-            let ctx = crate::psblas::libpsblas_spmv_setup(
-                raw.nrows as i32, raw.ncols as i32, raw.nnz as i32,
-                raw.row_ptr.as_ptr(), raw.col_idx.as_ptr(), raw.values.as_ptr(),
-            );
-            crate::psblas::libpsblas_spmv_execute(ctx);
-            crate::psblas::libpsblas_spmv_teardown(ctx);
-        }
-
-        // --- Eigen (CSR, cross-format control) ---
-        unsafe {
-            let ctx = crate::eigen::libeigen_csr_spmv_setup(
-                raw.nrows as i32, raw.ncols as i32, raw.nnz as i32,
-                raw.row_ptr.as_ptr(), raw.col_idx.as_ptr(), raw.values.as_ptr(),
-            );
-            crate::eigen::libeigen_csr_spmv_execute(ctx);
-            crate::eigen::libeigen_csr_spmv_teardown(ctx);
-        }
-
-        // --- MKL (CSC, cross-format control) ---
-        unsafe {
-            let ctx = crate::mkl::libmkl_csc_spmv_setup(
-                raw.nrows as i32, raw.ncols as i32, raw.nnz as i32,
-                raw.col_ptr.as_ptr(), raw.row_idx.as_ptr(), raw.csc_values.as_ptr(),
-            );
-            crate::mkl::libmkl_csc_spmv_execute(ctx);
-            crate::mkl::libmkl_csc_spmv_teardown(ctx);
-        }
-
-        // Faer result is our reference — verify it has nonzero entries
-        let faer_norm: f64 = faer_result.iter().map(|v| v * v).sum::<f64>().sqrt();
-        assert!(
-            faer_norm > 0.0,
-            "faer y vector is all zeros after SpMV — matrix may be empty"
-        );
-
+        eprintln!("\nAll backends match Faer reference across {} matrices.", matrices.len());
         Ok(())
     }
 }

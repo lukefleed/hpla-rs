@@ -1,6 +1,6 @@
-# hpla-rs — Single-Threaded SpMV Benchmark Suite
+# Single-Threaded SpMV Benchmark
 
-A benchmarking framework for comparing Sparse Matrix-Vector multiplication (`y += A*x`) across Rust and C/C++/Fortran libraries under strictly identical, single-threaded conditions. Designed for publication in an international supercomputing journal.
+A benchmarking framework for comparing Sparse Matrix-Vector multiplication (`y += A*x`) across Rust and C/C++/Fortran libraries under strictly identical, single-threaded conditions.
 
 ## Backends
 
@@ -17,7 +17,7 @@ A benchmarking framework for comparing Sparse Matrix-Vector multiplication (`y +
 
 ## Prerequisites
 
-All external dependencies are managed through [Spack](https://spack.io/).
+All external dependencies are managed through Spack.
 
 ```bash
 # PETSc (serial, no optional solvers, LTO-enabled)
@@ -40,14 +40,7 @@ spack install openmpi
 Download test matrices from the [SuiteSparse Matrix Collection](https://sparse.tamu.edu/):
 
 ```bash
-mkdir -p matrices && cd matrices
-# Example: atmosmodd (1.27M rows, 8.8M nnz) and thermal2 (1.23M rows, 8.6M nnz)
-for m in Bourchtein/atmosmodd Schmid/thermal2; do
-    wget "https://suitesparse-collection-website.herokuapp.com/MM/${m}.tar.gz"
-done
-for f in *.tar.gz; do tar xf "$f" --strip-components=1; done
-rm -f *.tar.gz
-cd ..
+bash download_matrices.sh
 ```
 
 ## Building PSBLAS
@@ -75,6 +68,7 @@ spack load intel-oneapi-mkl openmpi
 cargo check --all-targets
 
 # Run benchmarks (single-threaded, pinned to core 0)
+export RUSTFLAGS="-C target-cpu=native"
 taskset -c 0 cargo bench
 ```
 
@@ -126,7 +120,3 @@ All backends accumulate `y += A*x` without resetting `y` between iterations. Thi
 | `panic` | `"abort"` |
 | CPU affinity | `taskset -c 0` |
 | Threading | `OMP_NUM_THREADS=1` |
-
-## License
-
-MIT

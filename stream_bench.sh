@@ -4,8 +4,6 @@
 #
 # Usage:
 #   bash stream_bench.sh
-#   # or, after chmod +x:
-#   ./stream_bench.sh
 
 set -euo pipefail
 

@@ -1,6 +1,15 @@
+// MKL Sparse BLAS FFI wrapper for SpMV benchmarking (Inspection-Execution API).
+// Matrix: zero-copy handle via mkl_sparse_d_create_csr/csc.
+// mkl_sparse_optimize() pre-analyzes sparsity during setup.
+// The actual SpMV kernel is in libmkl_core.so (Intel-compiled).
+// Vectors: mkl_malloc(64) for 64-byte alignment.
+
 #include <mkl.h>
 #include <stdint.h>
 #include <stdlib.h>
+
+_Static_assert(sizeof(MKL_INT) == sizeof(int32_t),
+               "MKL must use LP64 linking (32-bit MKL_INT). Link with mkl_intel_lp64, not ilp64.");
 
 typedef struct {
     sparse_matrix_t A;
@@ -32,7 +41,7 @@ MKLBenchContext* libmkl_spmv_setup(
     ctx->y = (double*)mkl_malloc(nrows * sizeof(double), 64);
 
     for (int i=0; i<ncols; ++i) ctx->x[i] = 1.0;
-    for (int i=0; i<nrows; ++i) ctx->y[i] = i * 1e-9;
+    for (int i=0; i<nrows; ++i) ctx->y[i] = 0.0;
 
     // 1. Create CSR handle (Zero-Copy projection of Rust memory)
     // MKL uses 0-based indexing by default (SPARSE_INDEX_BASE_ZERO)
@@ -75,6 +84,11 @@ void libmkl_spmv_execute(MKLBenchContext* ctx) {
         1.0, 
         ctx->y
     );
+}
+
+void libmkl_spmv_get_y(MKLBenchContext* ctx, double* out, int32_t len) {
+    int32_t n = len < ctx->nrows ? len : ctx->nrows;
+    for (int32_t i = 0; i < n; i++) out[i] = ctx->y[i];
 }
 
 void libmkl_spmv_teardown(MKLBenchContext* ctx) {
@@ -121,7 +135,7 @@ MKLCscBenchContext* libmkl_csc_spmv_setup(
     ctx->y = (double*)mkl_malloc(nrows * sizeof(double), 64);
 
     for (int i=0; i<ncols; ++i) ctx->x[i] = 1.0;
-    for (int i=0; i<nrows; ++i) ctx->y[i] = i * 1e-9;
+    for (int i=0; i<nrows; ++i) ctx->y[i] = 0.0;
 
     // 1. Create CSC handle (Zero-Copy projection of Rust memory)
     sparse_status_t status = mkl_sparse_d_create_csc(
@@ -163,6 +177,11 @@ void libmkl_csc_spmv_execute(MKLCscBenchContext* ctx) {
         1.0,
         ctx->y
     );
+}
+
+void libmkl_csc_spmv_get_y(MKLCscBenchContext* ctx, double* out, int32_t len) {
+    int32_t n = len < ctx->nrows ? len : ctx->nrows;
+    for (int32_t i = 0; i < n; i++) out[i] = ctx->y[i];
 }
 
 void libmkl_csc_spmv_teardown(MKLCscBenchContext* ctx) {

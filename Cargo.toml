@@ -9,13 +9,12 @@ license = "MIT"
 
 [dependencies]
 faer = { version = "0.23", default-features = false, features = ["std"] }
-csv = "1.4.0"
 serde = { version = "1.0", features = ["derive"] }
-clap = { version = "4.5", features = ["derive"] }
 matrix-market-rs = "0.1.3"
 
 [dev-dependencies]
 criterion = "0.5"
+anyhow = "1"
 
 [build-dependencies]
 cc = "1.0"

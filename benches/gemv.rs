@@ -5,7 +5,7 @@
 //! backends (Faer, PETSc, Eigen, MKL, PSBLAS) under identical conditions
 //! for cycle-accurate performance comparisons.
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use faer::col::Col;
 use faer::sparse::SparseColMat;
 use hpla_rs::eigen::{
@@ -13,8 +13,8 @@ use hpla_rs::eigen::{
     libeigen_spmv_execute, libeigen_spmv_setup, libeigen_spmv_teardown,
 };
 use hpla_rs::mkl::{
-    libmkl_csc_spmv_execute, libmkl_csc_spmv_setup, libmkl_csc_spmv_teardown,
-    libmkl_spmv_execute, libmkl_spmv_setup, libmkl_spmv_teardown,
+    libmkl_csc_spmv_execute, libmkl_csc_spmv_setup, libmkl_csc_spmv_teardown, libmkl_spmv_execute,
+    libmkl_spmv_setup, libmkl_spmv_teardown,
 };
 use hpla_rs::petsc::{libpetsc_spmv_execute, libpetsc_spmv_setup, libpetsc_spmv_teardown};
 use hpla_rs::psblas::{libpsblas_spmv_execute, libpsblas_spmv_setup, libpsblas_spmv_teardown};
@@ -43,10 +43,8 @@ fn get_matrices() -> Vec<PathBuf> {
 fn bench_spmv(c: &mut Criterion) {
     let matrices = get_matrices();
 
-    // METHODOLOGY: All backends accumulate y += A*x without resetting y between
-    // Criterion iterations. This is intentional — it measures the kernel in
-    // steady-state without injecting a memcpy into the hot path. The values in y
-    // do not affect SpMV cost (memory-bound, same access pattern regardless).
+    // y is not reset between iterations — avoids injecting a memcpy.
+    // SpMV is memory-bound; y values don't affect cost.
     for path in matrices {
         let name = path.file_stem().unwrap().to_string_lossy().to_string();
         let raw = load_mtx_raw(&path).expect("Failed to load matrix");
@@ -71,12 +69,13 @@ fn bench_spmv(c: &mut Criterion) {
         let a_faer =
             SparseColMat::try_new_from_triplets(raw.nrows, raw.ncols, &raw.triplets).unwrap();
         let x_faer: Col<f64> = Col::from_fn(raw.ncols, |_| 1.0);
-        let y_init_faer: Col<f64> = Col::from_fn(raw.nrows, |i| (i as f64) * 1e-9);
+        let y_init_faer: Col<f64> = Col::zeros(raw.nrows);
         let mut y_faer = y_init_faer.clone();
 
-        // NOTE: black_box is only needed for Faer because it is pure Rust compiled
-        // in the same LTO unit — LLVM could theoretically DCE the result. FFI backends
-        // (PETSc, Eigen, MKL, PSBLAS) are opaque barriers that prevent DCE inherently.
+        // NOTE: black_box applied uniformly. With fat LTO (clang -flto +
+        // cargo lto="fat"), LLVM sees across the FFI boundary. Dynamically-linked
+        // library calls (PETSc, MKL) act as the real DCE barriers, but black_box
+        // is a zero-cost compiler fence that removes any ambiguity.
         group.bench_with_input(BenchmarkId::new("faer", "csc"), &(), |b, _| {
             b.iter(|| {
                 spmv_faer(&a_faer, &x_faer, &mut y_faer);
@@ -101,6 +100,7 @@ fn bench_spmv(c: &mut Criterion) {
             group.bench_with_input(BenchmarkId::new("petsc", "csr_inodes"), &(), |b, _| {
                 b.iter(|| {
                     libpetsc_spmv_execute(ctx);
+                    criterion::black_box(ctx);
                 });
             });
 
@@ -108,7 +108,7 @@ fn bench_spmv(c: &mut Criterion) {
         }
 
         // ----------------------------------------------------
-        // PETSc (Raw Scalar)
+        // PETSc
         // ----------------------------------------------------
         unsafe {
             let ctx = libpetsc_spmv_setup(
@@ -124,6 +124,7 @@ fn bench_spmv(c: &mut Criterion) {
             group.bench_with_input(BenchmarkId::new("petsc", "csr_raw"), &(), |b, _| {
                 b.iter(|| {
                     libpetsc_spmv_execute(ctx);
+                    criterion::black_box(ctx);
                 });
             });
 
@@ -131,7 +132,7 @@ fn bench_spmv(c: &mut Criterion) {
         }
 
         // ----------------------------------------------------
-        // Intel MKL (Sparse BLAS Inspection-Execution)
+        // Intel MKL
         // ----------------------------------------------------
         unsafe {
             let ctx = libmkl_spmv_setup(
@@ -146,6 +147,7 @@ fn bench_spmv(c: &mut Criterion) {
             group.bench_with_input(BenchmarkId::new("mkl", "csr_ie"), &(), |b, _| {
                 b.iter(|| {
                     libmkl_spmv_execute(ctx);
+                    criterion::black_box(ctx);
                 });
             });
 
@@ -153,7 +155,7 @@ fn bench_spmv(c: &mut Criterion) {
         }
 
         // ----------------------------------------------------
-        // Intel MKL CSC (cross-format control)
+        // Intel MKL CSC
         // ----------------------------------------------------
         unsafe {
             let ctx = libmkl_csc_spmv_setup(
@@ -168,6 +170,7 @@ fn bench_spmv(c: &mut Criterion) {
             group.bench_with_input(BenchmarkId::new("mkl", "csc_ie"), &(), |b, _| {
                 b.iter(|| {
                     libmkl_csc_spmv_execute(ctx);
+                    criterion::black_box(ctx);
                 });
             });
 
@@ -175,7 +178,7 @@ fn bench_spmv(c: &mut Criterion) {
         }
 
         // ----------------------------------------------------
-        // Eigen (C++ CSC)
+        // Eigen
         // ----------------------------------------------------
         unsafe {
             let ctx = libeigen_spmv_setup(
@@ -190,6 +193,7 @@ fn bench_spmv(c: &mut Criterion) {
             group.bench_with_input(BenchmarkId::new("eigen", "csc_map"), &(), |b, _| {
                 b.iter(|| {
                     libeigen_spmv_execute(ctx);
+                    criterion::black_box(ctx);
                 });
             });
 
@@ -212,6 +216,7 @@ fn bench_spmv(c: &mut Criterion) {
             group.bench_with_input(BenchmarkId::new("eigen", "csr_map"), &(), |b, _| {
                 b.iter(|| {
                     libeigen_csr_spmv_execute(ctx);
+                    criterion::black_box(ctx);
                 });
             });
 
@@ -219,7 +224,7 @@ fn bench_spmv(c: &mut Criterion) {
         }
 
         // ----------------------------------------------------
-        // PSBLAS (Fortran MPI-based Sparse BLAS)
+        // PSBLAS
         // ----------------------------------------------------
         unsafe {
             let ctx = libpsblas_spmv_setup(
@@ -234,6 +239,7 @@ fn bench_spmv(c: &mut Criterion) {
             group.bench_with_input(BenchmarkId::new("psblas", "csr"), &(), |b, _| {
                 b.iter(|| {
                     libpsblas_spmv_execute(ctx);
+                    criterion::black_box(ctx);
                 });
             });
 

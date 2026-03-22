@@ -22,6 +22,7 @@ unsafe extern "C" {
     ) -> *mut MklBenchContext;
 
     pub fn libmkl_spmv_execute(ctx: *mut MklBenchContext);
+    pub fn libmkl_spmv_get_y(ctx: *mut MklBenchContext, out: *mut c_double, len: i32);
     pub fn libmkl_spmv_teardown(ctx: *mut MklBenchContext);
 
     // CSC Inspection-Execution API
@@ -35,5 +36,6 @@ unsafe extern "C" {
     ) -> *mut MklCscBenchContext;
 
     pub fn libmkl_csc_spmv_execute(ctx: *mut MklCscBenchContext);
+    pub fn libmkl_csc_spmv_get_y(ctx: *mut MklCscBenchContext, out: *mut c_double, len: i32);
     pub fn libmkl_csc_spmv_teardown(ctx: *mut MklCscBenchContext);
 }

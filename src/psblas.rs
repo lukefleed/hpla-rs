@@ -14,6 +14,7 @@ unsafe extern "C" {
     ) -> *mut PsblasContextOpaque;
 
     pub fn libpsblas_spmv_execute(ctx: *mut PsblasContextOpaque);
+    pub fn libpsblas_spmv_get_y(ctx: *mut PsblasContextOpaque, out: *mut f64, len: i32);
 
     pub fn libpsblas_spmv_teardown(ctx: *mut PsblasContextOpaque);
 }

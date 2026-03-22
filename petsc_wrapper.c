@@ -1,13 +1,18 @@
-// Minimal C wrapper to interface PETSc with Rust FFI.
-// 
-// Operates on pre-allocated raw memory buffers constructed by Rust
-// to guarantee a zero-copy architecture for fair comparisons.
+// PETSc FFI wrapper for SpMV benchmarking.
+// Matrix: zero-copy via MatCreateSeqAIJWithArrays. Vectors: PETSc-allocated.
+// The actual SpMV kernel (MatMult_SeqAIJ) lives in libpetsc.so — compiled
+// by spack, not by our build.rs flags.
 
 #include <petscmat.h>
 #include <petscvec.h>
 #include <petscsys.h>
 #include <stdint.h>
 #include <stdio.h>
+
+_Static_assert(sizeof(PetscInt) == sizeof(int32_t),
+               "PETSc must be built with 32-bit indices (--with-64-bit-indices=0)");
+_Static_assert(sizeof(PetscScalar) == sizeof(double),
+               "PETSc must be built with real scalars (not complex)");
 
 // Forward declare the benchmark context holding PETSc objects
 typedef struct {
@@ -65,6 +70,14 @@ PetscBenchContext* libpetsc_spmv_setup(
 void libpetsc_spmv_execute(PetscBenchContext* ctx) {
     // y = A * x + y
     MatMultAdd(ctx->A, ctx->x, ctx->y, ctx->y);
+}
+
+void libpetsc_spmv_get_y(PetscBenchContext* ctx, double* out, int32_t len) {
+    const PetscScalar *y_array;
+    VecGetArrayRead(ctx->y, &y_array);
+    int32_t n = len < ctx->nrows ? len : ctx->nrows;
+    for (int32_t i = 0; i < n; i++) out[i] = y_array[i];
+    VecRestoreArrayRead(ctx->y, &y_array);
 }
 
 void libpetsc_spmv_teardown(PetscBenchContext* ctx) {

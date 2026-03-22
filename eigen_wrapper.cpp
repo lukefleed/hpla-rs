@@ -1,7 +1,7 @@
-// Minimal C++ wrapper to interface Eigen with Rust FFI.
-// 
-// Operates on pre-allocated raw memory buffers constructed by Rust
-// to guarantee a zero-copy architecture (CSC) for fair comparisons.
+// Eigen FFI wrapper for SpMV benchmarking.
+// Zero-copy via Eigen::Map over CSC/CSR arrays.
+// Header-only: the SpMV kernel is compiled with our flags (-O3 -ffast-math
+// -flto), unlike PETSc/MKL whose kernels are in pre-compiled libraries.
 
 #include <Eigen/Sparse>
 #include <Eigen/Dense>
@@ -46,6 +46,11 @@ void libeigen_spmv_execute(EigenBenchContext* ctx) {
     *(ctx->y) += (*(ctx->A)) * (*(ctx->x));
 }
 
+void libeigen_spmv_get_y(EigenBenchContext* ctx, double* out, int32_t len) {
+    int32_t n = len < (int32_t)ctx->y->size() ? len : (int32_t)ctx->y->size();
+    for (int32_t i = 0; i < n; i++) out[i] = (*(ctx->y))[i];
+}
+
 void libeigen_spmv_teardown(EigenBenchContext* ctx) {
     delete ctx->A;
     delete ctx->x;
@@ -87,6 +92,11 @@ EigenCsrBenchContext* libeigen_csr_spmv_setup(
 void libeigen_csr_spmv_execute(EigenCsrBenchContext* ctx) {
     // y += A * x
     *(ctx->y) += (*(ctx->A)) * (*(ctx->x));
+}
+
+void libeigen_csr_spmv_get_y(EigenCsrBenchContext* ctx, double* out, int32_t len) {
+    int32_t n = len < (int32_t)ctx->y->size() ? len : (int32_t)ctx->y->size();
+    for (int32_t i = 0; i < n; i++) out[i] = (*(ctx->y))[i];
 }
 
 void libeigen_csr_spmv_teardown(EigenCsrBenchContext* ctx) {

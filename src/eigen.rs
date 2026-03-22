@@ -22,6 +22,7 @@ unsafe extern "C" {
     ) -> *mut EigenBenchContext;
 
     pub fn libeigen_spmv_execute(ctx: *mut EigenBenchContext);
+    pub fn libeigen_spmv_get_y(ctx: *mut EigenBenchContext, out: *mut c_double, len: i32);
     pub fn libeigen_spmv_teardown(ctx: *mut EigenBenchContext);
 }
 
@@ -42,5 +43,6 @@ unsafe extern "C" {
     ) -> *mut EigenCsrBenchContext;
 
     pub fn libeigen_csr_spmv_execute(ctx: *mut EigenCsrBenchContext);
+    pub fn libeigen_csr_spmv_get_y(ctx: *mut EigenCsrBenchContext, out: *mut c_double, len: i32);
     pub fn libeigen_csr_spmv_teardown(ctx: *mut EigenCsrBenchContext);
 }

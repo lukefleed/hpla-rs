@@ -23,5 +23,6 @@ unsafe extern "C" {
     ) -> *mut PetscBenchContext;
 
     pub fn libpetsc_spmv_execute(ctx: *mut PetscBenchContext);
+    pub fn libpetsc_spmv_get_y(ctx: *mut PetscBenchContext, out: *mut c_double, len: i32);
     pub fn libpetsc_spmv_teardown(ctx: *mut PetscBenchContext);
 }

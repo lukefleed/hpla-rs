@@ -35,6 +35,17 @@ CONFIG_ORDER = [
     'mkl/csr_ie', 'mkl/csc_ie',
 ]
 
+BACKEND_COLORS = {
+    'faer/csc':          '#0072B2',  # blue
+    'eigen/csc_map':     '#E69F00',  # orange
+    'eigen/csr_map':     '#CC79A7',  # pink
+    'petsc/csr_inodes':  '#009E73',  # green
+    'petsc/csr_raw':     '#56B4E9',  # sky blue
+    'psblas/csr':        '#D55E00',  # vermilion
+    'mkl/csr_ie':        '#F0E442',  # yellow
+    'mkl/csc_ie':        '#000000',  # black
+}
+
 
 def load_data(criterion_path):
     """Load Criterion benchmark results into a DataFrame.
@@ -77,6 +88,8 @@ def load_data(criterion_path):
 
                     elements_processed = bench_data.get('throughput', {}).get('Elements', 0)
                     time_ns = est_data.get('mean', {}).get('point_estimate', 0)
+                    ci_lower = est_data.get('mean', {}).get('confidence_interval', {}).get('lower_bound', 0)
+                    ci_upper = est_data.get('mean', {}).get('confidence_interval', {}).get('upper_bound', 0)
 
                     if elements_processed > 0 and time_ns > 0:
                         # throughput = elements / seconds -> GFLOP/s
@@ -84,10 +97,20 @@ def load_data(criterion_path):
                         elements_per_sec = elements_processed / time_s
                         gflops_per_sec = elements_per_sec / 1e9
 
+                        # CI bounds: lower time -> higher GFLOP/s (inverted)
+                        if ci_lower > 0 and ci_upper > 0:
+                            gflops_upper = elements_processed / (ci_lower * 1e-9) / 1e9
+                            gflops_lower = elements_processed / (ci_upper * 1e-9) / 1e9
+                        else:
+                            gflops_upper = gflops_per_sec
+                            gflops_lower = gflops_per_sec
+
                         data.append({
                             'Matrix': matrix_name,
                             'Configuration': full_config,
                             'Throughput (GFLOP/s)': gflops_per_sec,
+                            'GFLOP/s lower': gflops_lower,
+                            'GFLOP/s upper': gflops_upper,
                             'nnz': int(elements_processed / 2),
                         })
     return pd.DataFrame(data)
@@ -125,15 +148,13 @@ def read_mtx_dimensions(matrices_dir):
 
 
 def compute_arithmetic_intensity(nrows, ncols, nnz):
-    """Compute arithmetic intensity for SpMV under a cold-cache model.
+    """Cold-cache compulsory-traffic AI for CSR SpMV (FLOP/byte).
 
-    The compulsory-traffic formula assumes CSR storage with 32-bit
-    indices, 64-bit values, and accounts for the full read of *x*,
-    plus a read-modify-write of *y*::
+    bytes = (nrows+1)*4 + nnz*4 + nnz*8 + ncols*8 + nrows*16
+    FLOP = 2 * nnz
 
-        bytes = (nrows+1)*4 + nnz*4 + nnz*8 + ncols*8 + nrows*16
-
-    Returns FLOP/byte where FLOP = 2 * nnz.
+    For square matrices, CSR and CSC give the same result.
+    After warmup, y may be cached — effective AI is higher than plotted.
     """
     bytes_moved = (nrows + 1) * 4 + nnz * 4 + nnz * 8 + ncols * 8 + nrows * 16
     return (2 * nnz) / bytes_moved
@@ -164,8 +185,7 @@ def plot_roofline(df, matrix_dims, hw_config, output_dir):
     matrices = sorted(df['Matrix'].unique())
 
     # Assign colors to backends, markers to matrices
-    backend_cmap = plt.cm.get_cmap('tab10', max(len(backends), 1))
-    backend_colors = {b: backend_cmap(i) for i, b in enumerate(backends)}
+    backend_colors = {b: BACKEND_COLORS.get(b, '#999999') for b in backends}
 
     marker_shapes = ['o', 's', 'D', '^', 'v', 'P', 'X', '*', 'h', '<', '>']
     matrix_markers = {m: marker_shapes[i % len(marker_shapes)] for i, m in enumerate(matrices)}
@@ -209,6 +229,15 @@ def plot_roofline(df, matrix_dims, hw_config, output_dir):
         ceiling_line = stream_bw * ai_line
         ax.plot(ai_line, ceiling_line, 'r--', linewidth=2.0, zorder=4,
                 label=f'STREAM Triad ceiling ({stream_bw:.1f} GB/s)')
+
+    # Draw compute ceiling (Rpeak) if configured.
+    # Rpeak = avx_freq_GHz * doubles_per_vec * flops_per_fma * fma_ports
+    # e.g. Ice Lake 2xFMA512: 2.1 * 8 * 2 * 2 = 67.2 GFLOP/s
+    # Use sustained AVX-512 freq (check turbostat), not nominal base.
+    peak_gflops = hw_config.get('peak_gflops', None)
+    if peak_gflops is not None:
+        ax.axhline(y=peak_gflops, color='blue', linestyle=':', linewidth=1.5,
+                   label=f'Peak compute ({peak_gflops:.1f} GFLOP/s)', zorder=4)
 
     ax.set_xscale('log')
     ax.set_yscale('log')
@@ -303,16 +332,21 @@ def generate_plots(df, output_dir, matrix_dims=None, hw_config=None):
 
         plt.figure(figsize=(8.5, 4.5))
 
-        # Pure matplotlib bar chart
         x_pos = np.arange(len(matrix_df))
 
-        # Use default color cycle
-        colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
-        bar_colors = [colors[i % len(colors)] for i in range(len(matrix_df))]
+        bar_colors = [BACKEND_COLORS.get(cfg, '#999999') for cfg in matrix_df['Configuration']]
+
+        # Confidence-interval error bars (inverted: lower time -> higher GFLOP/s)
+        yerr_lower = matrix_df['Throughput (GFLOP/s)'] - matrix_df['GFLOP/s lower']
+        yerr_upper = matrix_df['GFLOP/s upper'] - matrix_df['Throughput (GFLOP/s)']
+        yerr = [yerr_lower.values, yerr_upper.values]
 
         bars = plt.bar(
             x_pos,
             matrix_df['Throughput (GFLOP/s)'],
+            yerr=yerr,
+            capsize=3,
+            ecolor='gray',
             color=bar_colors,
             edgecolor='black',
             linewidth=1.2,
@@ -344,9 +378,9 @@ def generate_plots(df, output_dir, matrix_dims=None, hw_config=None):
         plt.gca().spines['top'].set_visible(False)
         plt.gca().spines['right'].set_visible(False)
 
-        # Dynamic Y limit based on global max and optional ceiling
-        global_max = df['Throughput (GFLOP/s)'].max()
-        ylim_top = max(global_max, ceiling) * 1.15 if ceiling is not None else global_max * 1.15
+        # Dynamic Y limit based on per-matrix max and optional ceiling
+        local_max = matrix_df['Throughput (GFLOP/s)'].max()
+        ylim_top = max(local_max, ceiling) * 1.15 if ceiling is not None else local_max * 1.15
         plt.ylim(0, ylim_top)
 
         # Format the X-axis labels to look cleaner in print
