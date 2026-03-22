@@ -41,7 +41,7 @@ libpsblas_spmv_setup(int nrows, int ncols, int nnz,
   setenv("OMPI_MCA_mpi_yield_when_idle", "1", 1);
 
   // Preserve the user's taskset -c 3 CPU affinity! OpenMPI hijacks it by
-  // default.
+  // defaul (?)
   cpu_set_t cpuset;
   sched_getaffinity(0, sizeof(cpu_set_t), &cpuset);
 
@@ -53,7 +53,7 @@ libpsblas_spmv_setup(int nrows, int ncols, int nnz,
   }
 
   // Restore the original affinity so the rest of the Criterion benchmarks
-  // survive!
+  // survive.
   sched_setaffinity(0, sizeof(cpu_set_t), &cpuset);
 
   ctx->cctxt = psb_c_new_ctxt();

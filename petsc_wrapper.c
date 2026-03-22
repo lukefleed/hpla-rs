@@ -25,13 +25,13 @@ typedef struct {
 } PetscBenchContext;
 
 // Initialize PETSc and create the matrix from raw CSR pointers
-// Note: We expect 32-bit indices (PetscInt typically 32-bit depending on config, we enforce u32 in rust)
+// Note: We expect 32-bit indices
 PetscBenchContext* libpetsc_spmv_setup(
-    int32_t nrows, 
-    int32_t ncols, 
+    int32_t nrows,
+    int32_t ncols,
     int32_t nnz,
-    const int32_t *row_ptr, 
-    const int32_t *col_idx, 
+    const int32_t *row_ptr,
+    const int32_t *col_idx,
     const double *values,
     int disable_inode)
 {
@@ -55,7 +55,7 @@ PetscBenchContext* libpetsc_spmv_setup(
 
     // Create Matrix from raw CSR
     /*
-        Petsc's MatCreateSeqAIJWithArrays uses the provided memory directly!
+        Petsc's MatCreateSeqAIJWithArrays uses the provided memory directly.
         This is zero-copy and identical to Rust.
     */
     MatCreateSeqAIJWithArrays(PETSC_COMM_SELF, nrows, ncols, (PetscInt*)row_ptr, (PetscInt*)col_idx, (PetscScalar*)values, &ctx->A);
