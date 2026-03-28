@@ -25,23 +25,25 @@ plt.rcParams.update({
 })
 
 # Backends whose storage format is CSC (plotted with hollow markers on roofline)
-CSC_BACKENDS = {'faer/csc', 'eigen/csc_map', 'mkl/csc_ie'}
+CSC_BACKENDS = {'faer/csc', 'eigen/csc_map', 'mkl/csc_ie', 'psblas/csc'}
 
 CONFIG_ORDER = [
-    'faer/csc',
+    'faer/csc', 'faer/csr',
     'eigen/csc_map', 'eigen/csr_map',
     'petsc/csr_inodes', 'petsc/csr_raw',
-    'psblas/csr',
+    'psblas/csr', 'psblas/csc',
     'mkl/csr_ie', 'mkl/csc_ie',
 ]
 
 BACKEND_COLORS = {
     'faer/csc':          '#0072B2',  # blue
+    'faer/csr':          '#4477AA',  # steel blue
     'eigen/csc_map':     '#E69F00',  # orange
     'eigen/csr_map':     '#CC79A7',  # pink
     'petsc/csr_inodes':  '#009E73',  # green
     'petsc/csr_raw':     '#56B4E9',  # sky blue
     'psblas/csr':        '#D55E00',  # vermilion
+    'psblas/csc':        '#E6550D',  # dark vermilion
     'mkl/csr_ie':        '#F0E442',  # yellow
     'mkl/csc_ie':        '#000000',  # black
 }

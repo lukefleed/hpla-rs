@@ -1,7 +1,6 @@
 //! Low-level FFI bindings to the C++ Eigen wrapper.
 //!
-//! Exposes external C functions that bypass standard library overhead
-//! by operating directly on raw pointers mapped via `Eigen::Map`.
+//! Exposes external C functions for CSC and CSR SpMV via Eigen::Map.
 
 use std::os::raw::c_double;
 

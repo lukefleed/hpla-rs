@@ -1,12 +1,19 @@
 // PSBLAS FFI wrapper for SpMV benchmarking (Fortran via C bindings + MPI).
-// NOT zero-copy: elements inserted row-by-row via psb_c_dspins(), assembled
-// into internal CSR via psb_c_dspasb_opt(). Copy happens during setup only.
+// NOT zero-copy: elements inserted via psb_c_dspins(), assembled into internal
+// CSR or CSC via psb_c_dspasb_opt(). Copy happens during setup only.
 // MPI initialized once; CPU affinity saved/restored around MPI_Init.
-// psb_c_exit NOT called — avoids MPI_Finalize so Criterion can loop matrices.
+// psb_c_exit_ctxt frees the Fortran context without MPI_Finalize so Criterion
+// can loop matrices.
 
+// Include <complex> before psb_base_cbind.h: the PSBLAS header opens
+// extern "C" { before #include <complex>, which is illegal in C++.
+// Pre-including <complex> here makes the second inclusion a no-op via
+// its include guard.
+#include <complex>
 #include "psb_base_cbind.h"
 #include <mpi.h>
 #include <sched.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -23,10 +30,10 @@ typedef struct {
 extern "C" {
 
 psblas_context_t *
-libpsblas_spmv_setup(int nrows, int ncols, int nnz,
-                     const int *row_ptr,  // CSR row pointers (0-based)
-                     const int *col_idx,  // CSR column indices (0-based)
-                     const double *values // CSR values
+libpsblas_spmv_setup(int32_t nrows, int32_t ncols, int32_t nnz,
+                     const int32_t *row_ptr,  // CSR row pointers (0-based)
+                     const int32_t *col_idx,  // CSR column indices (0-based)
+                     const double *values     // CSR values
 ) {
   (void)nnz; // Suppress unused parameter warning
 
@@ -40,8 +47,8 @@ libpsblas_spmv_setup(int nrows, int ncols, int nnz,
   setenv("OMP_NUM_THREADS", "1", 1);
   setenv("OMPI_MCA_mpi_yield_when_idle", "1", 1);
 
-  // Preserve the user's taskset -c 3 CPU affinity! OpenMPI hijacks it by
-  // defaul (?)
+  // Preserve the caller's CPU affinity (taskset -c 0). OpenMPI resets it by
+  // default.
   cpu_set_t cpuset;
   sched_getaffinity(0, sizeof(cpu_set_t), &cpuset);
 
@@ -83,14 +90,12 @@ libpsblas_spmv_setup(int nrows, int ncols, int nnz,
     exit(1);
   }
 
-  // Assemble the descriptor
   info = psb_c_cdasb(ctx->cdh);
   if (info != 0) {
     fprintf(stderr, "[PSBLAS] Fatal: cdasb failed with %d\n", info);
     exit(1);
   }
 
-  // 3. Setup vectors
   ctx->xh = psb_c_new_dvector();
   ctx->yh = psb_c_new_dvector();
   psb_c_dgeall(ctx->xh, ctx->cdh);
@@ -98,12 +103,9 @@ libpsblas_spmv_setup(int nrows, int ncols, int nnz,
   psb_c_dgeasb(ctx->xh, ctx->cdh);
   psb_c_dgeasb(ctx->yh, ctx->cdh);
 
-  // Pre-fill x with 1.0 (as the benchmark expects)
   psb_c_dvect_set_scal(ctx->xh, 1.0);
-  // Pre-fill y with 0.0 or the expected init
   psb_c_dvect_set_scal(ctx->yh, 0.0);
 
-  // 4. Setup sparse matrix
   ctx->ah = psb_c_new_dspmat();
   psb_c_dspall(ctx->ah, ctx->cdh);
 
@@ -130,7 +132,7 @@ libpsblas_spmv_setup(int nrows, int ncols, int nnz,
   free(temp_iw);
   free(temp_jw);
 
-  // Assemble sparse matrix (forces internal optimization and layout CSR)
+  // Assemble into internal CSR
   info = psb_c_dspasb_opt(ctx->ah, ctx->cdh, "CSR", 0, 0);
   if (info != 0) {
     fprintf(stderr, "[PSBLAS] Fatal: dspasb_opt failed with %d\n", info);
@@ -174,15 +176,105 @@ void libpsblas_spmv_teardown(psblas_context_t *ctx) {
   free(ctx->vl);
 
   psb_c_barrier(*(ctx->cctxt));
-  // DANGEROUS: Do NOT call psb_c_exit here!
-  // psb_c_exit internally calls MPI_Finalize.
-  // Criterion loops over multiple matrices, creating and destroying contexts.
-  // Calling MPI_Init -> MPI_Finalize -> MPI_Init in the same process is illegal
-  // in MPI and will crash. The OS will reap the MPI environment when the cargo
-  // bench process exits.
+  // psb_c_exit_ctxt cleans up the Fortran-side context and frees the
+  // duplicated MPI communicator without calling MPI_Finalize (unlike
+  // psb_c_exit, which would make subsequent MPI_Init illegal).
+  psb_c_exit_ctxt(*(ctx->cctxt));
 
   free(ctx->cctxt);
   free(ctx);
+}
+
+psblas_context_t *
+libpsblas_csc_spmv_setup(int32_t nrows, int32_t ncols, int32_t nnz,
+                         const int32_t *col_ptr,
+                         const int32_t *row_idx,
+                         const double *values) {
+  (void)nnz;
+
+  psblas_context_t *ctx = (psblas_context_t *)malloc(sizeof(psblas_context_t));
+  if (!ctx)
+    return NULL;
+
+  setenv("OMP_NUM_THREADS", "1", 1);
+  setenv("OMPI_MCA_mpi_yield_when_idle", "1", 1);
+
+  cpu_set_t cpuset;
+  sched_getaffinity(0, sizeof(cpu_set_t), &cpuset);
+
+  int mpi_initialized;
+  MPI_Initialized(&mpi_initialized);
+  if (!mpi_initialized) {
+    int provided;
+    MPI_Init_thread(NULL, NULL, MPI_THREAD_SINGLE, &provided);
+  }
+
+  sched_setaffinity(0, sizeof(cpu_set_t), &cpuset);
+
+  ctx->cctxt = psb_c_new_ctxt();
+  MPI_Fint f_comm = MPI_Comm_c2f(MPI_COMM_WORLD);
+  psb_c_init_from_fint(ctx->cctxt, f_comm);
+  psb_c_set_index_base(0);
+
+  ctx->cdh = psb_c_new_descriptor();
+  ctx->vl = (psb_l_t *)malloc(nrows * sizeof(psb_l_t));
+  for (int i = 0; i < nrows; i++)
+    ctx->vl[i] = i;
+
+  int info = psb_c_cdall_vl(nrows, ctx->vl, *(ctx->cctxt), ctx->cdh);
+  if (info != 0) {
+    fprintf(stderr, "[PSBLAS] Fatal: cdall failed with %d\n", info);
+    exit(1);
+  }
+
+  info = psb_c_cdasb(ctx->cdh);
+  if (info != 0) {
+    fprintf(stderr, "[PSBLAS] Fatal: cdasb failed with %d\n", info);
+    exit(1);
+  }
+
+  ctx->xh = psb_c_new_dvector();
+  ctx->yh = psb_c_new_dvector();
+  psb_c_dgeall(ctx->xh, ctx->cdh);
+  psb_c_dgeall(ctx->yh, ctx->cdh);
+  psb_c_dgeasb(ctx->xh, ctx->cdh);
+  psb_c_dgeasb(ctx->yh, ctx->cdh);
+
+  psb_c_dvect_set_scal(ctx->xh, 1.0);
+  psb_c_dvect_set_scal(ctx->yh, 0.0);
+
+  ctx->ah = psb_c_new_dspmat();
+  psb_c_dspall(ctx->ah, ctx->cdh);
+
+  // Insert elements column by column from CSC arrays
+  psb_l_t *temp_iw = (psb_l_t *)malloc(nrows * sizeof(psb_l_t));
+  psb_l_t *temp_jw = (psb_l_t *)malloc(nrows * sizeof(psb_l_t));
+
+  for (int j = 0; j < ncols; j++) {
+    int start = col_ptr[j];
+    int end = col_ptr[j + 1];
+    int nz_in_col = end - start;
+
+    if (nz_in_col > 0) {
+      for (int k = 0; k < nz_in_col; k++) {
+        temp_iw[k] = (psb_l_t)row_idx[start + k];
+        temp_jw[k] = (psb_l_t)j;
+      }
+      psb_c_dspins(nz_in_col, temp_iw, temp_jw, &values[start], ctx->ah,
+                   ctx->cdh);
+    }
+  }
+  free(temp_iw);
+  free(temp_jw);
+
+  // Assemble into internal CSC
+  info = psb_c_dspasb_opt(ctx->ah, ctx->cdh, "CSC", 0, 0);
+  if (info != 0) {
+    fprintf(stderr, "[PSBLAS] Fatal: dspasb_opt (CSC) failed with %d\n", info);
+    exit(1);
+  }
+
+  return ctx;
 }
 
 } // extern "C"

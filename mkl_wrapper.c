@@ -1,11 +1,12 @@
 // MKL Sparse BLAS FFI wrapper for SpMV benchmarking (Inspection-Execution API).
-// Matrix: zero-copy handle via mkl_sparse_d_create_csr/csc.
-// mkl_sparse_optimize() pre-analyzes sparsity during setup.
+// Matrix: create_csr/csc stores pointers to caller's arrays (zero-copy at creation);
+// mkl_sparse_optimize() may build optimized internal representations.
 // The actual SpMV kernel is in libmkl_core.so (Intel-compiled).
 // Vectors: mkl_malloc(64) for 64-byte alignment.
 
 #include <mkl.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 _Static_assert(sizeof(MKL_INT) == sizeof(int32_t),
@@ -43,8 +44,7 @@ MKLBenchContext* libmkl_spmv_setup(
     for (int i=0; i<ncols; ++i) ctx->x[i] = 1.0;
     for (int i=0; i<nrows; ++i) ctx->y[i] = 0.0;
 
-    // 1. Create CSR handle (Zero-Copy projection of Rust memory)
-    // MKL uses 0-based indexing by default (SPARSE_INDEX_BASE_ZERO)
+    // Zero-copy CSR handle over caller's arrays
     sparse_status_t status = mkl_sparse_d_create_csr(
         &ctx->A,
         SPARSE_INDEX_BASE_ZERO,
@@ -63,11 +63,14 @@ MKLBenchContext* libmkl_spmv_setup(
         return NULL;
     }
 
-    // 2. Define Matrix Description
-    ctx->descr.type = SPARSE_MATRIX_TYPE_GENERAL;
-
-    // 3. Inspection-Execution Optimization (Equivalent to PETSc Inodes/assembly)
-    mkl_sparse_optimize(ctx->A);
+    ctx->descr = (struct matrix_descr){ .type = SPARSE_MATRIX_TYPE_GENERAL };
+    // mkl_sparse_set_mv_hint enables format-specific IE optimizations but
+    // effects are matrix-dependent: can help or hurt depending on structure.
+    // mkl_sparse_set_mv_hint(ctx->A, SPARSE_OPERATION_NON_TRANSPOSE, ctx->descr, 1000);
+    status = mkl_sparse_optimize(ctx->A);
+    if (status != SPARSE_STATUS_SUCCESS) {
+        fprintf(stderr, "[MKL] Warning: mkl_sparse_optimize (CSR) returned %d\n", status);
+    }
 
     return ctx;
 }
@@ -137,7 +140,7 @@ MKLCscBenchContext* libmkl_csc_spmv_setup(
     for (int i=0; i<ncols; ++i) ctx->x[i] = 1.0;
     for (int i=0; i<nrows; ++i) ctx->y[i] = 0.0;
 
-    // 1. Create CSC handle (Zero-Copy projection of Rust memory)
+    // Zero-copy CSC handle over caller's arrays
     sparse_status_t status = mkl_sparse_d_create_csc(
         &ctx->A,
         SPARSE_INDEX_BASE_ZERO,
@@ -156,11 +159,12 @@ MKLCscBenchContext* libmkl_csc_spmv_setup(
         return NULL;
     }
 
-    // 2. Define Matrix Description
-    ctx->descr.type = SPARSE_MATRIX_TYPE_GENERAL;
-
-    // 3. Inspection-Execution Optimization
-    mkl_sparse_optimize(ctx->A);
+    ctx->descr = (struct matrix_descr){ .type = SPARSE_MATRIX_TYPE_GENERAL };
+    // mkl_sparse_set_mv_hint(ctx->A, SPARSE_OPERATION_NON_TRANSPOSE, ctx->descr, 1000);
+    status = mkl_sparse_optimize(ctx->A);
+    if (status != SPARSE_STATUS_SUCCESS) {
+        fprintf(stderr, "[MKL] Warning: mkl_sparse_optimize (CSC) returned %d\n", status);
+    }
 
     return ctx;
 }

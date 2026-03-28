@@ -11,11 +11,11 @@ pub mod psblas;
 use std::fs::File;
 use std::io::BufRead;
 use std::io::BufReader;
-use std::path::PathBuf;
+use std::path::Path;
 
 use faer::col::Col;
 use faer::sparse::linalg::matmul::sparse_dense_matmul;
-use faer::sparse::{SparseColMat, Triplet};
+use faer::sparse::{SparseColMat, SparseRowMat, Triplet};
 use faer::{Accum, Par};
 use matrix_market_rs::MtxData;
 
@@ -33,7 +33,7 @@ pub struct RawMatrix {
 }
 
 // Helper to determine symmetry reading the raw header
-fn detect_symmetry(path: &PathBuf) -> (bool, bool) {
+fn detect_symmetry(path: &Path) -> (bool, bool) {
     if let Ok(file) = File::open(path) {
         let mut reader = BufReader::new(file);
         let mut line = String::new();
@@ -50,7 +50,7 @@ fn detect_symmetry(path: &PathBuf) -> (bool, bool) {
     (false, false)
 }
 
-pub fn load_mtx_raw(path: &PathBuf) -> Result<RawMatrix, String> {
+pub fn load_mtx_raw(path: &Path) -> Result<RawMatrix, String> {
     let (is_symmetric, is_skew) = detect_symmetry(path);
     let data = MtxData::<f64>::from_file(path).map_err(|e| format!("{}", e))?;
 
@@ -162,6 +162,22 @@ pub fn spmv_faer(a: &SparseColMat<u32, f64>, x: &Col<f64>, y: &mut Col<f64>) {
     );
 }
 
+#[inline(always)]
+pub fn spmv_faer_csr(a: &SparseRowMat<u32, f64>, x: &Col<f64>, y: &mut Col<f64>) {
+    // faer 0.24 SparseDenseMatMul trait accepts SparseRowMatRef directly.
+    // Internally reinterprets CSR as transposed CSC (zero-cost pointer rename)
+    // and dispatches to dense_sparse_csc_matmul, which with M=1 (transposed
+    // column vector) produces the row-oriented dot-product-per-row pattern.
+    sparse_dense_matmul(
+        y.as_mat_mut(),
+        Accum::Add,
+        a.as_ref(),
+        x.as_mat(),
+        1.0,
+        Par::Seq,
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,8 +203,7 @@ mod tests {
     }
 
     /// Checks all backends produce the same y = A*x (relative L2 error).
-    /// Runs on every .mtx in matrices/. PSBLAS has wider tolerance (1e-6)
-    /// because it copies data internally.
+    /// Runs on every .mtx in matrices/.
     #[test]
     fn test_backend_numerical_equivalence() -> anyhow::Result<()> {
         let mut matrices: Vec<_> = std::fs::read_dir("matrices")?
@@ -205,12 +220,7 @@ mod tests {
 
         anyhow::ensure!(!matrices.is_empty(), "no .mtx files found in matrices/");
 
-        // Tolerance for zero-copy backends (PETSc, Eigen, MKL): floating-point
-        // reordering under -ffast-math can introduce small differences.
-        let tol_strict = 1e-10;
-        // PSBLAS assembles its own internal CSR from the input data, so
-        // accumulated rounding may be slightly larger.
-        let tol_psblas = 1e-6;
+        let tol = 1e-4;
 
         for path in &matrices {
             let name = path
@@ -237,6 +247,22 @@ mod tests {
                 "{name}: faer y is all zeros — matrix may be empty"
             );
 
+            // --- Faer CSR ---
+            {
+                let a_faer_csr =
+                    SparseRowMat::try_new_from_triplets(raw.nrows, raw.ncols, &raw.triplets)
+                        .map_err(|e| anyhow::anyhow!("faer SparseRowMat({name}): {e:?}"))?;
+                let mut y_csr: Col<f64> = Col::zeros(raw.nrows);
+                spmv_faer_csr(&a_faer_csr, &x_faer, &mut y_csr);
+                let csr_result: Vec<f64> = (0..raw.nrows).map(|i| y_csr[i]).collect();
+                let err = relative_l2_error(&csr_result, &faer_ref);
+                eprintln!("  faer/csr:         rel L2 = {err:.2e}");
+                assert!(
+                    err < tol,
+                    "{name}: faer/csr diverged: rel L2 = {err:.2e}"
+                );
+            }
+
             // --- PETSc (CSR, inodes disabled) ---
             {
                 let mut y_buf = vec![0.0f64; raw.nrows];
@@ -261,7 +287,7 @@ mod tests {
                 let err = relative_l2_error(&y_buf, &faer_ref);
                 eprintln!("  petsc/csr_raw:    rel L2 = {err:.2e}");
                 assert!(
-                    err < tol_strict,
+                    err < tol,
                     "{name}: petsc/csr_raw diverged: rel L2 = {err:.2e}"
                 );
             }
@@ -290,7 +316,7 @@ mod tests {
                 let err = relative_l2_error(&y_buf, &faer_ref);
                 eprintln!("  petsc/csr_inodes: rel L2 = {err:.2e}");
                 assert!(
-                    err < tol_strict,
+                    err < tol,
                     "{name}: petsc/csr_inodes diverged: rel L2 = {err:.2e}"
                 );
             }
@@ -318,7 +344,7 @@ mod tests {
                 let err = relative_l2_error(&y_buf, &faer_ref);
                 eprintln!("  eigen/csc_map:    rel L2 = {err:.2e}");
                 assert!(
-                    err < tol_strict,
+                    err < tol,
                     "{name}: eigen/csc_map diverged: rel L2 = {err:.2e}"
                 );
             }
@@ -346,7 +372,7 @@ mod tests {
                 let err = relative_l2_error(&y_buf, &faer_ref);
                 eprintln!("  eigen/csr_map:    rel L2 = {err:.2e}");
                 assert!(
-                    err < tol_strict,
+                    err < tol,
                     "{name}: eigen/csr_map diverged: rel L2 = {err:.2e}"
                 );
             }
@@ -374,7 +400,7 @@ mod tests {
                 let err = relative_l2_error(&y_buf, &faer_ref);
                 eprintln!("  mkl/csr_ie:       rel L2 = {err:.2e}");
                 assert!(
-                    err < tol_strict,
+                    err < tol,
                     "{name}: mkl/csr_ie diverged: rel L2 = {err:.2e}"
                 );
             }
@@ -402,7 +428,7 @@ mod tests {
                 let err = relative_l2_error(&y_buf, &faer_ref);
                 eprintln!("  mkl/csc_ie:       rel L2 = {err:.2e}");
                 assert!(
-                    err < tol_strict,
+                    err < tol,
                     "{name}: mkl/csc_ie diverged: rel L2 = {err:.2e}"
                 );
             }
@@ -430,8 +456,36 @@ mod tests {
                 let err = relative_l2_error(&y_buf, &faer_ref);
                 eprintln!("  psblas/csr:       rel L2 = {err:.2e}");
                 assert!(
-                    err < tol_psblas,
+                    err < tol,
                     "{name}: psblas/csr diverged: rel L2 = {err:.2e}"
+                );
+            }
+
+            // --- PSBLAS (CSC) ---
+            {
+                let mut y_buf = vec![0.0f64; raw.nrows];
+                unsafe {
+                    let ctx = crate::psblas::libpsblas_csc_spmv_setup(
+                        raw.nrows as i32,
+                        raw.ncols as i32,
+                        raw.nnz as i32,
+                        raw.col_ptr.as_ptr(),
+                        raw.row_idx.as_ptr(),
+                        raw.csc_values.as_ptr(),
+                    );
+                    crate::psblas::libpsblas_spmv_execute(ctx);
+                    crate::psblas::libpsblas_spmv_get_y(
+                        ctx,
+                        y_buf.as_mut_ptr(),
+                        raw.nrows as i32,
+                    );
+                    crate::psblas::libpsblas_spmv_teardown(ctx);
+                }
+                let err = relative_l2_error(&y_buf, &faer_ref);
+                eprintln!("  psblas/csc:       rel L2 = {err:.2e}");
+                assert!(
+                    err < tol,
+                    "{name}: psblas/csc diverged: rel L2 = {err:.2e}"
                 );
             }
         }

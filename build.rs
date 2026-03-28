@@ -1,8 +1,9 @@
-//! Custom build script for compiling the FFI C wrapper.
+//! Custom build script for compiling the FFI C/C++ wrappers.
 //!
-//! Automatically locates the PETSc and Eigen installations strictly via Spack
-//! and passes aggressive optimization flags to `clang`/`clang++` before
-//! linking them statically to our Rust crate.
+//! Locates all library installations strictly via `spack location -i <pkg>`.
+//! Wrapper compilation uses clang/clang++ with `-flto` to enable cross-language
+//! LTO with Rust's LLVM backend. The `-mtune=native` flag is required because
+//! Clang (unlike GCC) does not imply it from `-march=native`.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -38,6 +39,7 @@ fn main() {
         .include(petsc_include)
         .flag("-O3")
         .flag("-march=native")
+        .flag("-mtune=native")
         .flag("-ffast-math")
         .flag("-flto")
         .compile("petsc_wrapper");
@@ -56,9 +58,7 @@ fn main() {
             String::from_utf8_lossy(&eigen_output.stderr)
         );
     }
-    // ----------------------------------------------------
-    // C++ Eigen compilation
-    // ----------------------------------------------------
+    // Eigen is header-only: no rustc-link-lib, rustc-link-search, or rpath needed.
     let eigen_dir = PathBuf::from(
         String::from_utf8_lossy(&eigen_output.stdout).trim(),
     );
@@ -70,6 +70,7 @@ fn main() {
         .compiler("clang++")
         .flag("-O3")
         .flag("-march=native")
+        .flag("-mtune=native")
         .flag("-ffast-math")
         .flag("-w") // Suppress all internal Eigen C++ warnings
         .flag("-flto")
@@ -96,7 +97,6 @@ fn main() {
     let mkl_lib = mkl_prefix.join("mkl/latest/lib");
 
     println!("cargo::rustc-link-search=native={}", mkl_lib.display());
-    // MKL Sequential Single-Threaded Link Line
     // Force the linker to keep all MKL libraries even if not directly referenced by our object files
     // We pass them as a single comma-separated linker argument to bypass rustc reordering
     println!("cargo::rustc-link-arg=-Wl,--no-as-needed,-lmkl_intel_lp64,-lmkl_sequential,-lmkl_core,--as-needed");
@@ -112,6 +112,7 @@ fn main() {
         .compiler("clang")
         .flag("-O3")
         .flag("-march=native")
+        .flag("-mtune=native")
         .flag("-ffast-math")
         .flag("-flto")
         .compile("mkl_wrapper");
@@ -119,7 +120,20 @@ fn main() {
     // ----------------------------------------------------
     // C++ PSBLAS compilation
     // ----------------------------------------------------
-    let psblas_dir = PathBuf::from("local/psblas3");
+    let psblas_output = Command::new("spack")
+        .args(["location", "-i", "psblas"])
+        .output()
+        .expect("Failed to execute spack command for PSBLAS. Is spack sourced & in your PATH?");
+
+    if !psblas_output.status.success() {
+        panic!(
+            "spack location -i psblas failed. Make sure PSBLAS is installed via Spack.\nError: {}",
+            String::from_utf8_lossy(&psblas_output.stderr)
+        );
+    }
+    let psblas_dir = PathBuf::from(
+        String::from_utf8_lossy(&psblas_output.stdout).trim(),
+    );
     let psblas_include = psblas_dir.join("include");
     let psblas_lib = psblas_dir.join("lib");
 
@@ -141,6 +155,7 @@ fn main() {
     let mpi_include = PathBuf::from(&mpi_dir).join("include");
 
     println!("cargo::rustc-link-search=native={}", psblas_lib.display());
+    println!("cargo::rustc-link-arg=-Wl,-rpath,{}", psblas_lib.display());
     println!("cargo::rustc-link-search=native={}", mpi_lib.display());
 
     cc::Build::new()
@@ -151,15 +166,15 @@ fn main() {
         .compiler("clang++")
         .flag("-O3")
         .flag("-march=native")
+        .flag("-mtune=native")
         .flag("-ffast-math")
         .flag("-Wno-return-type-c-linkage") // Suppress PSBLAS third-party header warnings for std::complex C-linkage
         .flag("-Wno-unused-parameter")
         .flag("-flto")
         .compile("psblas_wrapper");
 
-    // Force linkage by using link-arg instead of link-lib static, as rustc will
-    // aggressively discard static archives if no Rust FFI directly calls them,
-    // ignoring our hidden C++ wrapper dependencies.
+    // Use link-arg instead of link-lib: rustc discards static archives when no
+    // Rust FFI symbol references them directly, breaking our C++ wrapper deps.
     println!("cargo::rustc-link-arg=-Wl,--push-state,--no-as-needed");
     println!("cargo::rustc-link-arg=-lpsb_cbind");
     println!("cargo::rustc-link-arg=-lpsb_linsolve");
@@ -179,9 +194,11 @@ fn main() {
     println!("cargo::rustc-link-lib=dylib=mpi");
     println!("cargo::rustc-link-arg=-Wl,-rpath,{}", mpi_lib.display());
 
-    // Recompilation triggers
+    // Recompilation triggers: wrapper source files
     println!("cargo::rerun-if-changed=petsc_wrapper.c");
     println!("cargo::rerun-if-changed=eigen_wrapper.cpp");
     println!("cargo::rerun-if-changed=mkl_wrapper.c");
     println!("cargo::rerun-if-changed=psblas_wrapper.cpp");
+    // Force rebuild when spack environment changes (e.g. package reinstall)
+    println!("cargo::rerun-if-env-changed=SPACK_ROOT");
 }

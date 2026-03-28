@@ -7,7 +7,7 @@
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use faer::col::Col;
-use faer::sparse::SparseColMat;
+use faer::sparse::{SparseColMat, SparseRowMat};
 use hpla_rs::eigen::{
     libeigen_csr_spmv_execute, libeigen_csr_spmv_setup, libeigen_csr_spmv_teardown,
     libeigen_spmv_execute, libeigen_spmv_setup, libeigen_spmv_teardown,
@@ -17,8 +17,11 @@ use hpla_rs::mkl::{
     libmkl_spmv_setup, libmkl_spmv_teardown,
 };
 use hpla_rs::petsc::{libpetsc_spmv_execute, libpetsc_spmv_setup, libpetsc_spmv_teardown};
-use hpla_rs::psblas::{libpsblas_spmv_execute, libpsblas_spmv_setup, libpsblas_spmv_teardown};
-use hpla_rs::{load_mtx_raw, spmv_faer};
+use hpla_rs::psblas::{
+    libpsblas_csc_spmv_setup, libpsblas_spmv_execute, libpsblas_spmv_setup,
+    libpsblas_spmv_teardown,
+};
+use hpla_rs::{load_mtx_raw, spmv_faer, spmv_faer_csr};
 use std::fs;
 use std::path::PathBuf;
 
@@ -38,8 +41,7 @@ fn get_matrices() -> Vec<PathBuf> {
     files
 }
 
-/// Core Criterion benchmarking loop.
-/// Sets up the benchmark group per matrix and defines custom memory throughputs.
+/// Per-matrix Criterion benchmark loop.
 fn bench_spmv(c: &mut Criterion) {
     let matrices = get_matrices();
 
@@ -51,7 +53,6 @@ fn bench_spmv(c: &mut Criterion) {
 
         let mut group = c.benchmark_group(format!("spmv_{}", name));
 
-        // Setup Throughput for memory bandwidth or flop/s representation
         // For SpMV (y += A*x): 2*NNZ ops
         // Bandwidth: (rows+1)*4 + nnz*4 + nnz*8 + cols*8 + rows*16 (read y + write y)
         // let bytes =
@@ -59,8 +60,7 @@ fn bench_spmv(c: &mut Criterion) {
         //         as u64;
         // group.throughput(Throughput::Bytes(bytes));
 
-        // Setup Throughput for computational performance (GFLOP/s)
-        // For SpMV (y += A*x), we perform one multiply and one add per non-zero: 2*NNZ FLOPs.
+        // For SpMV (y += A*x), one multiply and one add per non-zero: 2*NNZ FLOPs.
         group.throughput(Throughput::Elements(2 * raw.nnz as u64));
 
         // ----------------------------------------------------
@@ -80,6 +80,20 @@ fn bench_spmv(c: &mut Criterion) {
             b.iter(|| {
                 spmv_faer(&a_faer, &x_faer, &mut y_faer);
                 criterion::black_box(&mut y_faer);
+            });
+        });
+
+        // ----------------------------------------------------
+        // Faer (CSR)
+        // ----------------------------------------------------
+        let a_faer_csr =
+            SparseRowMat::try_new_from_triplets(raw.nrows, raw.ncols, &raw.triplets).unwrap();
+        let mut y_faer_csr: Col<f64> = Col::zeros(raw.nrows);
+
+        group.bench_with_input(BenchmarkId::new("faer", "csr"), &(), |b, _| {
+            b.iter(|| {
+                spmv_faer_csr(&a_faer_csr, &x_faer, &mut y_faer_csr);
+                criterion::black_box(&mut y_faer_csr);
             });
         });
 
@@ -246,6 +260,29 @@ fn bench_spmv(c: &mut Criterion) {
             libpsblas_spmv_teardown(ctx);
         }
 
+        // ----------------------------------------------------
+        // PSBLAS (CSC)
+        // ----------------------------------------------------
+        unsafe {
+            let ctx = libpsblas_csc_spmv_setup(
+                raw.nrows as i32,
+                raw.ncols as i32,
+                raw.nnz as i32,
+                raw.col_ptr.as_ptr(),
+                raw.row_idx.as_ptr(),
+                raw.csc_values.as_ptr(),
+            );
+
+            group.bench_with_input(BenchmarkId::new("psblas", "csc"), &(), |b, _| {
+                b.iter(|| {
+                    libpsblas_spmv_execute(ctx);
+                    criterion::black_box(ctx);
+                });
+            });
+
+            libpsblas_spmv_teardown(ctx);
+        }
+
         group.finish();
     }
 }
@@ -255,7 +292,7 @@ criterion_group!(
     config = Criterion::default()
         .sample_size(100)
         .warm_up_time(std::time::Duration::from_secs(3))
-        .measurement_time(std::time::Duration::from_secs(8));
+        .measurement_time(std::time::Duration::from_secs(20));
     targets = bench_spmv
 );
 criterion_main!(benches);

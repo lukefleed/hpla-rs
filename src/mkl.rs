@@ -1,10 +1,16 @@
-use std::ffi::c_double;
+//! Low-level FFI bindings to the C Intel MKL wrapper.
+//!
+//! Exposes external C functions for CSR and CSC Inspection-Execution SpMV.
 
+use std::os::raw::c_double;
+
+/// Opaque struct representing the C-side CSR benchmark context.
 #[repr(C)]
 pub struct MklBenchContext {
     _private: [u8; 0],
 }
 
+/// Opaque struct representing the C-side CSC benchmark context.
 #[repr(C)]
 pub struct MklCscBenchContext {
     _private: [u8; 0],

@@ -1,0 +1,41 @@
+# Spack environment for SpMV benchmarks.
+#
+# Usage:
+#   source ~/spack/share/spack/setup-env.sh
+#   spack env activate -d .
+#   spack concretize -f
+#   spack install
+#
+# After installation, `spack env activate -d .` makes all packages
+# available without individual `spack load` commands.
+
+spack:
+  specs:
+    - intel-oneapi-mkl
+    - openmpi
+    - eigen
+    - petsc ~mpi +double ~debug +shared +metis
+        cflags='-g -O3 -march=native -mtune=native -flto'
+        cxxflags='-g -O3 -march=native -mtune=native -flto'
+        fflags='-g -O3 -march=native -mtune=native -flto -ffree-line-length-none'
+        ^intel-oneapi-mkl
+    - psblas@develop +mpi
+        cflags='-g -O3 -march=native -mtune=native -flto -ffat-lto-objects'
+        cxxflags='-g -O3 -march=native -mtune=native -flto -ffat-lto-objects'
+        fflags='-g -O3 -march=native -mtune=native -flto -ffat-lto-objects -ffree-line-length-none'
+        fcopt='-frecursive' libs='-lgomp'
+        ^openmpi ^intel-oneapi-mkl
+
+  packages:
+    all:
+      require: '%gcc@11.4.0'
+      target: [icelake]
+    blas:
+      require: 'intel-oneapi-mkl'
+    lapack:
+      require: 'intel-oneapi-mkl'
+    mpi:
+      require: 'openmpi'
+
+  concretizer:
+    unify: true

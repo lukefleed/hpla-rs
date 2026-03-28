@@ -8,3 +8,5 @@ python/hw_config.json
 CLAUDE.md
 docs/
 python/__pycache__/
+spack.lock
+.spack-env

@@ -1,7 +1,6 @@
 //! Low-level FFI bindings to the C PETSc wrapper.
 //!
-//! Exposes external C functions that bypass standard library overhead
-//! by operating directly on raw pointers.
+//! Exposes external C functions for CSR SpMV via PETSc.
 
 use std::os::raw::{c_double, c_int};
 

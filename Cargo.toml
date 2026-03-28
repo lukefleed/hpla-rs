@@ -8,7 +8,7 @@ readme = "README.md"
 license = "MIT"
 
 [dependencies]
-faer = { version = "0.23", default-features = false, features = ["std"] }
+faer = { version = "0.24", default-features = false, features = ["std"] }
 serde = { version = "1.0", features = ["derive"] }
 matrix-market-rs = "0.1.3"
 
