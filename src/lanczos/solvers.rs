@@ -89,15 +89,9 @@ where
         .into());
     }
 
-    // --- 3. Solution Reconstruction ---
-    // Pre-allocate the destination vector `x_k`. This explicit allocation avoids
-    // intermediate copies and gives the optimizer better visibility.
+    // x_k = V_k * y_k_prime * ||b||. The scaling by ||b|| goes through the
+    // alpha parameter of matmul to avoid a separate scaling pass.
     let mut x_k = Mat::<T>::zeros(standard_output.v_k.nrows(), 1);
-
-    // Compute x_k = V_k * y_k_prime * ||b|| using [`faer::linalg::matmul`].
-    // This high-performance kernel is optimized for memory access patterns and can leverage
-    // SIMD instructions. The scaling by ||b|| is handled efficiently by the `alpha`
-    // parameter of `matmul`, avoiding an extra allocation for a scaled coefficient vector.
     matmul(
         x_k.as_mut(),
         Accum::Replace,

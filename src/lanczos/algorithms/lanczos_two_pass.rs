@@ -1,7 +1,6 @@
 //! Memory-efficient two-pass symmetric Lanczos algorithm implementation.
 //!
-//! **NOTE**: We recommend using the high-level method [`crate::lanczos::solvers::lanczos_two_pass`] instead.
-//! This module is intended for use cases where fine-grained control over the Lanczos process is required.
+//! Prefer [`crate::lanczos::solvers::lanczos_two_pass`] for normal usage.
 //!
 //! This module implements the two-pass Lanczos variant that reduces memory usage from
 //! O(nk) to O(n) by avoiding storage of the full basis matrix. The algorithm executes

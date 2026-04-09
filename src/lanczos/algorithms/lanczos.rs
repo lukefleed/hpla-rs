@@ -1,7 +1,6 @@
 //! Standard one-pass symmetric Lanczos algorithm implementation.
 //!
-//! **NOTE**: We recommend using the high-level method [`crate::lanczos::solvers::lanczos`] instead. This
-//! module is intended for use cases where fine-grained control over the Lanczos process is required.
+//! Prefer [`crate::lanczos::solvers::lanczos`] for normal usage.
 //!
 //! This module implements the traditional Lanczos method that generates and stores the
 //! full orthonormal basis V_k during iteration. The main function [`lanczos_standard`]
