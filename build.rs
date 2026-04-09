@@ -1,9 +1,10 @@
-//! Custom build script for compiling the FFI C/C++ wrappers.
+//! Custom build script for compiling the FFI C/C++/Fortran wrappers.
 //!
 //! Locates all library installations strictly via `spack location -i <pkg>`.
-//! Wrapper compilation uses clang/clang++ with `-flto` to enable cross-language
-//! LTO with Rust's LLVM backend. The `-mtune=native` flag is required because
-//! Clang (unlike GCC) does not imply it from `-march=native`.
+//! C/C++ wrappers use clang/clang++ with `-flto` for cross-language LTO.
+//! Fortran wrappers use gfortran with `-ffat-lto-objects` for lld compatibility.
+//! The `-mtune=native` flag is required because Clang (unlike GCC) does not
+//! imply it from `-march=native`.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -35,7 +36,7 @@ fn main() {
 
     cc::Build::new()
         .compiler("clang")
-        .file("petsc_wrapper.c")
+        .file("ffi/spmv/petsc.c")
         .include(petsc_include)
         .flag("-O3")
         .flag("-march=native")
@@ -65,7 +66,7 @@ fn main() {
     let eigen_include = eigen_dir.join("include/eigen3");
     cc::Build::new()
         .cpp(true)
-        .file("eigen_wrapper.cpp")
+        .file("ffi/spmv/eigen.cpp")
         .include(eigen_include)
         .compiler("clang++")
         .flag("-O3")
@@ -107,7 +108,7 @@ fn main() {
     println!("cargo::rustc-link-arg=-Wl,-rpath,{}", mkl_lib.display());
 
     cc::Build::new()
-        .file("mkl_wrapper.c")
+        .file("ffi/spmv/mkl.c")
         .include(mkl_include)
         .compiler("clang")
         .flag("-O3")
@@ -160,9 +161,9 @@ fn main() {
 
     cc::Build::new()
         .cpp(true)
-        .file("psblas_wrapper.cpp")
-        .include(psblas_include)
-        .include(mpi_include)
+        .file("ffi/spmv/psblas.cpp")
+        .include(&psblas_include)
+        .include(&mpi_include)
         .compiler("clang++")
         .flag("-O3")
         .flag("-march=native")
@@ -172,6 +173,20 @@ fn main() {
         .flag("-Wno-unused-parameter")
         .flag("-flto")
         .compile("psblas_wrapper");
+
+    let psblas_modules = psblas_dir.join("modules");
+
+    cc::Build::new()
+        .file("ffi/lanczos/psblas.f90")
+        .include(&psblas_modules)
+        .compiler("gfortran")
+        .flag("-O3")
+        .flag("-march=native")
+        .flag("-mtune=native")
+        .flag("-ffast-math")
+        .flag("-ffat-lto-objects")
+        .flag("-Wno-unused-dummy-argument") // stub has no-op functions; remove when implemented
+        .compile("psblas_lanczos_wrapper");
 
     // Use link-arg instead of link-lib: rustc discards static archives when no
     // Rust FFI symbol references them directly, breaking our C++ wrapper deps.
@@ -195,10 +210,11 @@ fn main() {
     println!("cargo::rustc-link-arg=-Wl,-rpath,{}", mpi_lib.display());
 
     // Recompilation triggers: wrapper source files
-    println!("cargo::rerun-if-changed=petsc_wrapper.c");
-    println!("cargo::rerun-if-changed=eigen_wrapper.cpp");
-    println!("cargo::rerun-if-changed=mkl_wrapper.c");
-    println!("cargo::rerun-if-changed=psblas_wrapper.cpp");
+    println!("cargo::rerun-if-changed=ffi/spmv/petsc.c");
+    println!("cargo::rerun-if-changed=ffi/spmv/eigen.cpp");
+    println!("cargo::rerun-if-changed=ffi/spmv/mkl.c");
+    println!("cargo::rerun-if-changed=ffi/spmv/psblas.cpp");
+    println!("cargo::rerun-if-changed=ffi/lanczos/psblas.f90");
     // Force rebuild when spack environment changes (e.g. package reinstall)
     println!("cargo::rerun-if-env-changed=SPACK_ROOT");
 }

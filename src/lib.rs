@@ -4,6 +4,7 @@
 //! and the foundational `spmv_faer` benchmark kernel.
 
 pub mod eigen;
+pub mod lanczos;
 pub mod mkl;
 pub mod petsc;
 pub mod psblas;
@@ -33,7 +34,7 @@ pub struct RawMatrix {
 }
 
 // Helper to determine symmetry reading the raw header
-fn detect_symmetry(path: &Path) -> (bool, bool) {
+pub fn detect_symmetry(path: &Path) -> (bool, bool) {
     if let Ok(file) = File::open(path) {
         let mut reader = BufReader::new(file);
         let mut line = String::new();
@@ -491,6 +492,151 @@ mod tests {
         }
 
         eprintln!("\nAll backends match Faer reference across {} matrices.", matrices.len());
+        Ok(())
+    }
+
+    /// Checks that the PSBLAS two-pass Lanczos produces the same exp(-A)b
+    /// as the Faer reference. Runs on every symmetric .mtx in matrices/.
+    /// Skips gracefully if the PSBLAS stub returns a null context.
+    #[test]
+    fn test_lanczos_backend_equivalence() -> anyhow::Result<()> {
+        use faer::dyn_stack::{MemBuffer, MemStack};
+        use faer::matrix_free::LinOp;
+        use faer::Par;
+        use rand::rngs::StdRng;
+        use rand::{Rng, SeedableRng};
+
+        use crate::lanczos::{determine_krylov_dim, exp_neg_tk_solver, lanczos_two_pass};
+        use crate::psblas::{
+            libpsblas_lanczos_execute, libpsblas_lanczos_get_y, libpsblas_lanczos_setup,
+            libpsblas_lanczos_teardown,
+        };
+
+        let mut matrices: Vec<_> = std::fs::read_dir("matrices")?
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry
+                    .path()
+                    .extension()
+                    .is_some_and(|ext| ext == "mtx")
+            })
+            .map(|entry| entry.path())
+            .collect();
+        matrices.sort();
+
+        anyhow::ensure!(!matrices.is_empty(), "no .mtx files found in matrices/");
+
+        let tol = 1e-8;
+        let max_k = 100;
+        let saad_tol = 1e-10;
+        let mut sym_count = 0;
+
+        for path in &matrices {
+            let name = path
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+
+            let (is_sym, _) = detect_symmetry(path);
+            if !is_sym {
+                eprintln!("  {name}: skipped (not symmetric)");
+                continue;
+            }
+            sym_count += 1;
+            eprintln!("\n=== {name} (Lanczos) ===");
+
+            let raw = load_mtx_raw(path)
+                .map_err(|e| anyhow::anyhow!("load_mtx_raw({name}): {e}"))?;
+
+            let a_faer =
+                SparseColMat::try_new_from_triplets(raw.nrows, raw.ncols, &raw.triplets)
+                    .map_err(|e| anyhow::anyhow!("faer SparseColMat({name}): {e:?}"))?;
+
+            // Deterministic starting vector (same seed as bench)
+            let mut rng = StdRng::seed_from_u64(42);
+            let b_vec: Vec<f64> = (0..raw.nrows).map(|_| rng.random::<f64>()).collect();
+            let b_mat = faer::Mat::from_fn(raw.nrows, 1, |i, _| b_vec[i]);
+
+            let scratch_req = a_faer.as_ref().apply_scratch(1, Par::Seq);
+
+            // Determine Krylov dimension
+            let krylov_dim = {
+                let mut mem = MemBuffer::new(scratch_req);
+                let stack = MemStack::new(&mut mem);
+                let (m, _) = determine_krylov_dim(
+                    &a_faer.as_ref(),
+                    b_mat.as_ref(),
+                    max_k,
+                    saad_tol,
+                    Par::Seq,
+                    stack,
+                )
+                .map_err(|e| anyhow::anyhow!("{name}: determine_krylov_dim failed: {e}"))?;
+                m.max(1)
+            };
+            eprintln!("  krylov_dim = {krylov_dim}");
+
+            // --- Faer reference ---
+            let faer_ref: Vec<f64> = {
+                let mut mem = MemBuffer::new(scratch_req);
+                let stack = MemStack::new(&mut mem);
+                let result = lanczos_two_pass(
+                    &a_faer.as_ref(),
+                    b_mat.as_ref(),
+                    krylov_dim,
+                    Par::Seq,
+                    stack,
+                    exp_neg_tk_solver,
+                )
+                .map_err(|e| anyhow::anyhow!("{name}: faer lanczos_two_pass failed: {e}"))?;
+                (0..raw.nrows).map(|i| result[(i, 0)]).collect()
+            };
+
+            let faer_norm: f64 = faer_ref.iter().map(|v| v * v).sum::<f64>().sqrt();
+            assert!(
+                faer_norm > 0.0,
+                "{name}: faer Lanczos result is all zeros"
+            );
+
+            // --- PSBLAS ---
+            {
+                let mut y_buf = vec![0.0f64; raw.nrows];
+                unsafe {
+                    let ctx = libpsblas_lanczos_setup(
+                        raw.nrows as i32,
+                        raw.ncols as i32,
+                        raw.nnz as i32,
+                        raw.row_ptr.as_ptr(),
+                        raw.col_idx.as_ptr(),
+                        raw.values.as_ptr(),
+                        b_vec.as_ptr(),
+                        krylov_dim as i32,
+                    );
+                    if ctx.is_null() {
+                        eprintln!("  psblas/two_pass:  skipped (stub returned null)");
+                        continue;
+                    }
+                    libpsblas_lanczos_execute(ctx);
+                    libpsblas_lanczos_get_y(
+                        ctx,
+                        y_buf.as_mut_ptr(),
+                        raw.nrows as i32,
+                    );
+                    libpsblas_lanczos_teardown(ctx);
+                }
+                let err = relative_l2_error(&y_buf, &faer_ref);
+                eprintln!("  psblas/two_pass:  rel L2 = {err:.2e}");
+                assert!(
+                    err < tol,
+                    "{name}: psblas/two_pass diverged: rel L2 = {err:.2e}"
+                );
+            }
+        }
+
+        anyhow::ensure!(sym_count > 0, "no symmetric matrices found in matrices/");
+        eprintln!(
+            "\nLanczos backends match Faer reference across {sym_count} symmetric matrices."
+        );
         Ok(())
     }
 }

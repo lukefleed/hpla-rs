@@ -11,3 +11,4 @@ python/__pycache__/
 spack.lock
 .spack-env
 TeX
+*.mod

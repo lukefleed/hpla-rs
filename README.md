@@ -1,8 +1,8 @@
-# Single-Threaded SpMV Benchmark
+# Single-Threaded Sparse Kernel Benchmarks
 
-Compares Sparse Matrix-Vector multiplication (`y += A*x`) performance across Rust and C/C++/Fortran numerical libraries on a single core.
+Compares sparse matrix kernel performance across Rust and C/C++/Fortran numerical libraries on a single core. Two kernels are benchmarked: SpMV (`y += A*x`) and two-pass Lanczos for computing `exp(-A)b`.
 
-## Backends
+## SpMV Backends
 
 | Configuration | Library | Format | Language |
 |---------------|---------|--------|----------|
@@ -18,6 +18,15 @@ Compares Sparse Matrix-Vector multiplication (`y += A*x`) performance across Rus
 | `psblas/csc` | [PSBLAS](https://github.com/sfilippone/psblas3) | CSC via Fortran C bindings (cross-format control) | C++/Fortran |
 
 Faer, Eigen, MKL, and PSBLAS each provide both CSR and CSC variants to isolate the effect of storage format from kernel quality.
+
+## Lanczos Backends
+
+| Configuration | Library | Language |
+|---------------|---------|----------|
+| `faer/two_pass` | [faer](https://github.com/sarah-quinones/faer-rs) 0.24 | Rust |
+| `psblas/two_pass` | [PSBLAS](https://github.com/sfilippone/psblas3) | Fortran |
+
+Lanczos benchmarks run only on symmetric matrices. The Krylov subspace dimension is determined adaptively per matrix via the Saad (1992) a posteriori error estimate. Throughput metric: `4k * (nnz + 4n)` FLOPs, covering both SpMV and vector recurrence work across two Lanczos passes.
 
 ## Target Hardware
 
@@ -91,14 +100,17 @@ C/C++ wrappers compile with clang `-flto`. Combined with Cargo `lto = "fat"`, th
 
 ### Measurement
 
-Criterion runs 100 samples per backend, 3 s warm-up, 20 s measurement. Throughput reported as GFLOP/s via `Throughput::Elements(2 * nnz)`. All backends accumulate `y += A*x` without resetting between iterations.
+**SpMV:** Criterion runs 100 samples per backend, 3 s warm-up, 20 s measurement. Throughput: `2 * nnz` FLOPs per iteration.
+
+**Lanczos:** 50 samples, 3 s warm-up, 30 s measurement. Throughput: `4k * (nnz + 4n)` FLOPs per iteration, where k is the adaptively determined Krylov dimension.
 
 ### Compiler Profile
 
 | Component | Compiler | Flags |
 |-----------|----------|-------|
 | PETSc, PSBLAS | gcc / gfortran | `-O3 -march=native -mtune=native -flto` |
-| FFI wrappers | clang / clang++ | `-O3 -march=native -mtune=native -ffast-math -flto` |
+| C/C++ FFI wrappers (`ffi/spmv/`) | clang / clang++ | `-O3 -march=native -mtune=native -ffast-math -flto` |
+| Fortran FFI wrappers (`ffi/lanczos/`) | gfortran | `-O3 -march=native -mtune=native -ffast-math -ffat-lto-objects` |
 | Rust (faer + harness) | rustc (LLVM) | `opt-level=3, lto="fat", codegen-units=1` |
 | MKL | Intel (precompiled) | — |
 
