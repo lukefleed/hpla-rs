@@ -444,29 +444,30 @@ contains
       ! OUTPUT:
       !   u(m)     : exp(T_m) e1
       !   err      : error estimate
-
+      use psb_base_mod
+      implicit none
       integer, intent(in) :: m
-      double precision, intent(inout) :: d(m)
-      double precision, intent(inout) :: e(m-1)
-      double precision, intent(in) :: beta_m, vnorm
-      double precision, intent(out) :: Q(m,m)
-      double precision, intent(inout) :: work(*)
-      double precision, intent(out) :: u(m)
-      double precision, intent(out) :: err
+      real(psb_dpk_), intent(inout) :: d(m)
+      real(psb_dpk_), intent(inout) :: e(m-1)
+      real(psb_dpk_), intent(in) :: beta_m, vnorm
+      real(psb_dpk_), intent(out) :: Q(m,m)
+      real(psb_dpk_), intent(inout) :: work(*)
+      real(psb_dpk_), intent(out) :: u(m)
+      real(psb_dpk_), intent(out) :: err
 
-      double precision :: w(m)
-      integer :: i, info
+      real(psb_dpk_) :: w(m)
+      integer(psb_ipk_) :: i, info
 
       ! Initialize Q = I
-      Q = 0.0d0
+      Q = 0.0_psb_dpk_
       do i = 1, m
-         Q(i,i) = 1.0d0
+         Q(i,i) = 1.0_psb_dpk_
       end do
 
       ! Eigendecomposition T_m = Q Λ Q^T
       call dsteqr('I', m, d, e, Q, m, work, info)
       if (info /= 0) then
-         print *, "Error in DSTEQR, info=", info
+         write(psb_out_unit,'(A,I0)') "Error in DSTEQR, info=", info
          stop
       end if
 
@@ -481,7 +482,7 @@ contains
       end do
 
       ! u = Q * w = exp(T_m) e1
-      call dgemv('N', m, m, 1.0d0, Q, m, w, 1, 0.0d0, u, 1)
+      call dgemv('N', m, m, 1.0_psb_dpk_, Q, m, w, 1, 0.0_psb_dpk_, u, 1)
 
       ! Error estimator: ||v|| * |beta_m| * |e_m^T u|
       err = vnorm * abs(beta_m) * abs(u(m))
