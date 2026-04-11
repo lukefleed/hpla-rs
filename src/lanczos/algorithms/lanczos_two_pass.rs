@@ -1,109 +1,63 @@
-//! Memory-efficient two-pass symmetric Lanczos algorithm implementation.
-//!
-//! Prefer [`crate::lanczos::solvers::lanczos_two_pass`] for normal usage.
-//!
-//! This module implements the two-pass Lanczos variant that reduces memory usage from
-//! O(nk) to O(n) by avoiding storage of the full basis matrix. The algorithm executes
-//! two separate phases:
-//!
-//! * **Pass One** ([`lanczos_pass_one`]): Runs the Lanczos recurrence to compute the
-//!   tridiagonal matrix T_k coefficients (alphas and betas). Basis vectors are discarded
-//!   after each iteration, maintaining constant memory usage.
-//!
-//! * **Pass Two** ([`lanczos_pass_two`]): After solving the projected problem on T_k,
-//!   re-executes the Lanczos recurrence using stored coefficients to regenerate basis
-//!   vectors on demand. Accumulates the final solution incrementally without storing
-//!   the full basis.
-//!
-//! This approach trades doubled matrix-vector products (2k instead of k) for reduced
-//! memory footprint, making it suitable for large-scale problems where memory is
-//! the limiting factor.
-//!
-//! We also provide a variant of the second pass, [`lanczos_pass_two_with_basis`],
-//! which is intended for testing and verification purposes. This function regenerates
-//! the full basis and returns it alongside the solution, allowing users to compare
-//! the regenerated basis with the one produced by the standard Lanczos method.
-//!
-//! ## When to use this module directly
-//!
-//! - You need access to intermediate decomposition results between passes
-//! - You want to implement custom logic between the two passes
-//! - You need the regenerated basis matrix for testing purposes
-//!
-//! For normal usage, prefer [`crate::lanczos::solvers::lanczos_two_pass`] which handles both passes automatically.
+//! Two-pass symmetric Lanczos for `f(A) b` with `O(n)` memory. The first
+//! pass ([`lanczos_pass_one_into`]) produces the scalars of `T_k` without
+//! storing the basis; the second pass ([`lanczos_pass_two_into`]) replays
+//! the recurrence from those scalars to accumulate `x_k = V_k y_k` on the
+//! fly. Both passes reuse the buffers owned by
+//! [`crate::lanczos::solvers::TwoPassWorkspace`].
 
-use super::{
-    LanczosDecomposition, LanczosError, LanczosErrorKind, LanczosIteration, LanczosPassTwoOutput,
-    breakdown_tolerance,
-};
+use super::{LanczosError, LanczosErrorKind, LanczosIteration, breakdown_tolerance};
+use crate::lanczos::solvers::TwoPassWorkspace;
 use faer::{
     Par,
     dyn_stack::MemStack,
     matrix_free::LinOp,
     prelude::*,
-    traits::math_utils::{add, mul, sub},
-    traits::{ComplexField, RealField},
 };
 
-/// Performs the first pass of the two-pass Lanczos algorithm.
+/// Runs up to `k` Lanczos steps and writes the scalar tridiagonal into
+/// `ws.alphas`/`ws.betas`. Caches `||b||` in `ws` for the second pass.
+/// Returns the number of steps actually taken.
 ///
-/// This pass computes the scalar decomposition of the operator's action on `b` by
-/// executing the Lanczos iteration without storing the basis vectors. The sole output
-/// is the [`LanczosDecomposition`] struct, which contains the essential scalar data
-/// ($\alpha_j$, $\beta_j$, and $\|\mathbf{b}\|_2$) needed to reconstruct the basis and
-/// solution in the second pass. This approach results in a minimal $O(n)$ memory footprint.
+/// The caller has already validated `b.nrows() == ws.n()` and
+/// `k <= ws.k_cap()` in the high-level driver.
 ///
-/// # Arguments
-/// * `operator`: A linear operator that implements [`faer::matrix_free::LinOp`].
-/// * `b`: The starting vector. Must not be a zero vector.
-/// * `k`: The maximum number of iterations to perform.
-/// * `par`: The parallelism strategy for operator application.
-/// * `stack`: A `MemStack` for temporary allocations.
-///
-/// # Returns
-/// A [`Result`] containing the [`LanczosDecomposition`] on success, or a [`LanczosError`].
-pub fn lanczos_pass_one<T: ComplexField>(
-    operator: &impl LinOp<T>,
-    b: MatRef<'_, T>,
+/// # Errors
+/// Returns [`LanczosError`] if `b` is the zero vector.
+pub(crate) fn lanczos_pass_one_into<O: LinOp<f64>>(
+    ws: &mut TwoPassWorkspace,
+    operator: &O,
+    b: MatRef<'_, f64>,
     k: usize,
     par: Par,
     stack: &mut MemStack,
-) -> Result<LanczosDecomposition<T::Real>, LanczosError>
-where
-    T::Real: RealField,
-{
+) -> Result<usize, LanczosError> {
     let b_norm = b.norm_l2();
+    ws.set_b_norm(b_norm);
+
+    let tolerance = breakdown_tolerance();
+    // Pass one never touches `x_k`; the second pass writes to it.
+    let (v_prev, v_curr, work, alphas, betas, _) = ws.parts_mut();
+
+    alphas.clear();
+    betas.clear();
 
     if k == 0 {
-        return Ok(LanczosDecomposition {
-            alphas: Vec::new(),
-            betas: Vec::new(),
-            steps_taken: 0,
-            b_norm,
-        });
+        return Ok(0);
     }
 
-    let mut alphas = Vec::with_capacity(k);
-    let mut betas = Vec::with_capacity(k.saturating_sub(1));
+    let mut lanczos_iter =
+        LanczosIteration::new_borrowed(operator, v_prev, v_curr, work, b, b_norm, k, par)?;
 
-    // The stateful Lanczos iterator handles the vector recurrence. In this pass,
-    // we only care about the scalar results of each step.
-    let mut lanczos_iter = LanczosIteration::new(operator, b, k, T::Real::copy_impl(&b_norm), par)?;
-
-    let mut steps_taken = 0;
-    let tolerance = breakdown_tolerance::<T::Real>();
-
+    let mut steps_taken = 0usize;
     for i in 0..k {
         if let Some(step) = lanczos_iter.next_step(stack) {
             alphas.push(step.alpha);
             steps_taken += 1;
 
-            // Check for breakdown, which terminates the process.
             if step.beta <= tolerance {
                 break;
             }
 
-            // Store the off-diagonal element, but discard the basis vector.
             if i < k - 1 {
                 betas.push(step.beta);
             }
@@ -112,177 +66,88 @@ where
         }
     }
 
-    Ok(LanczosDecomposition {
-        alphas,
-        betas,
-        steps_taken,
-        b_norm,
-    })
+    Ok(steps_taken)
 }
 
-/// Performs the second pass of the two-pass Lanczos algorithm.
-///
-/// This pass reconstructs the solution vector $\mathbf{x}_k = \mathbf{V}_k \mathbf{y}_k$
-/// by regenerating the Lanczos basis vectors on-the-fly using the coefficients from the
-/// first pass. It avoids storing the full basis, thus maintaining an $O(n)$ memory footprint.
-///
-/// # Arguments
-/// * `operator`: The linear operator $\mathbf{A}$.
-/// * `b`: The original starting vector.
-/// * `decomposition`: The scalar data generated by `lanczos_pass_one`.
-/// * `y_k`: The coefficient vector for the solution in the Lanczos basis, i.e.,
-///   $\mathbf{y}_k = f(\mathbf{T}_k) \mathbf{e}_1 \|\mathbf{b}\|_2$.
-/// * `stack`: A `MemStack` for temporary allocations.
-///
-/// # Returns
-/// A [`Result`] containing the final approximate solution vector $\mathbf{x}_k$.
-pub fn lanczos_pass_two<T: ComplexField>(
-    operator: &impl LinOp<T>,
-    b: MatRef<'_, T>,
-    decomposition: &LanczosDecomposition<T::Real>,
-    y_k: MatRef<'_, T>,
-    par: Par,
-    stack: &mut MemStack,
-) -> Result<Mat<T>, LanczosError>
-where
-    T::Real: RealField,
-{
-    let (x_k, _) = lanczos_pass_two_impl(operator, b, decomposition, y_k, par, stack, false)?;
-    Ok(x_k)
-}
-
-/// A test-only variant of [`lanczos_pass_two`] that also returns the regenerated basis.
-///
-/// This function is identical to [`lanczos_pass_two`] but additionally returns the full
-/// regenerated basis matrix $\mathbf{V}'_k$. It is used only during testing
-/// and is used to verify the numerical stability and faithfulness of the regeneration process
-/// by allowing a direct comparison with the basis stored by [`crate::lanczos::algorithms::lanczos::lanczos_standard`].
-pub fn lanczos_pass_two_with_basis<T: ComplexField>(
-    operator: &impl LinOp<T>,
-    b: MatRef<'_, T>,
-    decomposition: &LanczosDecomposition<T::Real>,
-    y_k: MatRef<'_, T>,
-    par: Par,
-    stack: &mut MemStack,
-) -> Result<LanczosPassTwoOutput<T>, LanczosError>
-where
-    T::Real: RealField,
-{
-    // Call the core implementation, configured to store the basis for testing purposes.
-    let (x_k, v_k_option) = lanczos_pass_two_impl(operator, b, decomposition, y_k, par, stack, true)?;
-    // The `v_k_option` is guaranteed to be `Some` because `store_basis` is true.
-    let Some(v_k) = v_k_option else {
-        unreachable!("v_k is guaranteed Some when store_basis is true");
-    };
-    Ok(LanczosPassTwoOutput { x_k, v_k })
-}
-
-/// A specialized recurrence step for the basis reconstruction in the second pass.
-///
-/// This function applies the Lanczos three-term recurrence using pre-computed
-/// coefficients $\alpha_j$ and $\beta_{j-1}$ to regenerate the next unnormalized basis vector.
-/// It avoids re-computing any coefficients, making it a pure reconstruction tool that is
-/// both more efficient and numerically faithful to the sequence of operations in the first pass.
-///
-/// The recurrence applied is: $\mathbf{w} = \mathbf{A}\mathbf{v}_j - \alpha_j \mathbf{v}_j - \beta_{j-1}\mathbf{v}_{j-1}$.
-#[expect(clippy::too_many_arguments)]
-fn lanczos_reconstruction_step<T: ComplexField, O: LinOp<T>>(
+/// Replays the Lanczos three-term recurrence to recover
+/// `w = A v_j - alpha_j v_j - beta_{j-1} v_{j-1}` with only the three
+/// rolling vectors in flight.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each argument is a distinct rolling buffer or scalar; grouping would require an extra struct for no benefit"
+)]
+fn reconstruct_step<O: LinOp<f64>>(
     operator: &O,
-    mut w: MatMut<'_, T>,
-    v_curr: MatRef<'_, T>,
-    v_prev: MatRef<'_, T>,
-    alpha_j: T::Real,
-    beta_prev: T::Real,
+    mut w: MatMut<'_, f64>,
+    v_curr: MatRef<'_, f64>,
+    v_prev: MatRef<'_, f64>,
+    alpha_j: f64,
+    beta_prev: f64,
     par: Par,
     stack: &mut MemStack,
 ) {
-    // Pass 1: w = A * v_curr
     operator.apply(w.rb_mut(), v_curr, par, stack);
 
-    // Pass 2 (fused): w -= beta_prev * v_prev + alpha_j * v_curr
-    let beta_prev_scaled = T::from_real_impl(&beta_prev);
-    let alpha_scaled = T::from_real_impl(&alpha_j);
+    // Single-store fused axpy: w -= beta_prev*v_prev + alpha_j*v_curr.
     zip!(w.rb_mut(), v_prev, v_curr).for_each(|unzip!(w_i, v_prev_i, v_curr_i)| {
-        *w_i = sub(w_i, &mul(&beta_prev_scaled, v_prev_i));
-        *w_i = sub(w_i, &mul(&alpha_scaled, v_curr_i));
+        *w_i -= beta_prev * *v_prev_i + alpha_j * *v_curr_i;
     });
 }
 
-/// Core implementation of the second Lanczos pass.
+/// Replays the recurrence from the scalars stashed in `ws` to compute
+/// `x_k = V_k y_k`, writing into `ws.x_k`. `y_k` is the projected
+/// coefficient vector (already scaled by `||b||`), with `y_k.nrows()`
+/// equal to `steps_taken`.
 ///
-/// This private function contains the logic to regenerate the basis and reconstruct the solution.
-/// It can be configured via the `store_basis` flag to either store the full regenerated basis
-/// (for testing and verification) or discard it (for production use, ensuring $O(n)$ memory).
-fn lanczos_pass_two_impl<T: ComplexField>(
-    operator: &impl LinOp<T>,
-    b: MatRef<'_, T>,
-    decomposition: &LanczosDecomposition<T::Real>,
-    y_k: MatRef<'_, T>,
+/// # Errors
+/// Returns [`LanczosError`] on a `y_k` length mismatch or a zero `b_norm`
+/// cached from the first pass.
+pub(crate) fn lanczos_pass_two_into<O: LinOp<f64>>(
+    ws: &mut TwoPassWorkspace,
+    operator: &O,
+    b: MatRef<'_, f64>,
+    y_k: MatRef<'_, f64>,
+    steps_taken: usize,
     par: Par,
     stack: &mut MemStack,
-    store_basis: bool,
-) -> Result<(Mat<T>, Option<Mat<T>>), LanczosError>
-where
-    T::Real: RealField,
-{
-    // --- Input Validation ---
-    // Ensure the coefficient vector `y_k` has the correct dimension, matching the
-    // number of steps successfully completed in the first pass.
-    if decomposition.steps_taken != y_k.nrows() {
+) -> Result<(), LanczosError> {
+    if steps_taken != y_k.nrows() {
         return Err(LanczosErrorKind::ParameterMismatch {
             param_name: "y_k".to_string(),
-            expected: decomposition.steps_taken,
+            expected: steps_taken,
             actual: y_k.nrows(),
         }
         .into());
     }
 
-    let zero_threshold = breakdown_tolerance::<T::Real>();
-    if decomposition.b_norm <= zero_threshold {
+    let zero_threshold = breakdown_tolerance();
+    let b_norm = ws.b_norm();
+    if b_norm <= zero_threshold {
         return Err(LanczosErrorKind::ZeroInputVector.into());
     }
 
-    if decomposition.steps_taken == 0 {
-        let v_k = if store_basis {
-            Some(Mat::zeros(b.nrows(), 0))
-        } else {
-            None
-        };
-        return Ok((Mat::zeros(b.nrows(), 1), v_k));
+    let (v_prev, v_curr, work, alphas, betas, x_k) = ws.parts_mut();
+
+    if steps_taken == 0 {
+        zip!(x_k.as_mut()).for_each(|unzip!(x_i)| *x_i = 0.0);
+        return Ok(());
     }
 
-    // --- Initialization ---
-    let mut v_prev = Mat::<T>::zeros(b.nrows(), 1);
-    let inv_norm = T::from_real_impl(&T::Real::recip_impl(&decomposition.b_norm));
-    let mut v_curr = b * Scale(inv_norm); // This is v_1
+    // Seed: v_1 = b / ||b||, v_0 = 0.
+    let inv_norm = b_norm.recip();
+    zip!(v_prev.as_mut()).for_each(|unzip!(v_i)| *v_i = 0.0);
+    zip!(v_curr.as_mut(), b).for_each(|unzip!(v_i, b_i)| *v_i = *b_i * inv_norm);
 
-    // Initialize the solution vector with the first component: x_k = y_1 * v_1
-    let mut x_k = &v_curr * Scale(T::copy_impl(&y_k[(0, 0)]));
+    // x_k = y_0 * v_1.
+    let y0 = y_k[(0, 0)];
+    zip!(x_k.as_mut(), v_curr.as_ref()).for_each(|unzip!(x_i, v_i)| *x_i = y0 * *v_i);
 
-    // If requested, initialize the matrix for storing the regenerated basis.
-    let mut v_k_regen = if store_basis {
-        let mut m = Mat::zeros(b.nrows(), decomposition.steps_taken);
-        m.col_mut(0).copy_from(v_curr.as_ref().col(0));
-        Some(m)
-    } else {
-        None
-    };
+    for j in 0..steps_taken.saturating_sub(1) {
+        let alpha_j = alphas[j];
+        let beta_j = betas[j];
+        let beta_prev = if j == 0 { 0.0 } else { betas[j - 1] };
 
-    let mut work = Mat::<T>::zeros(b.nrows(), 1);
-
-    // --- Main Reconstruction Loop ---
-    for j in 0..decomposition.steps_taken - 1 {
-        // Retrieve the scalar coefficients computed during the first pass.
-        let alpha_j = T::Real::copy_impl(&decomposition.alphas[j]);
-        let beta_j = T::Real::copy_impl(&decomposition.betas[j]);
-        let beta_prev = if j == 0 {
-            T::Real::zero_impl()
-        } else {
-            T::Real::copy_impl(&decomposition.betas[j - 1])
-        };
-
-        // 1. Regenerate the unnormalized next vector, r_j, using the stored coefficients.
-        lanczos_reconstruction_step(
+        reconstruct_step(
             operator,
             work.as_mut(),
             v_curr.as_ref(),
@@ -293,29 +158,19 @@ where
             stack,
         );
 
-        // 2. Normalize the regenerated vector using the stored beta_j. The first pass
-        // ensures that beta_j is not numerically zero at this step.
-        let inv_beta = T::from_real_impl(&T::Real::recip_impl(&beta_j));
+        let inv_beta = beta_j.recip();
         zip!(work.as_mut()).for_each(|unzip!(w_i)| {
-            *w_i = mul(w_i, &inv_beta);
+            *w_i *= inv_beta;
         });
-        // `work` now contains the regenerated vector v_{j+1}.
 
-        // 3. Accumulate the final solution vector component-wise: x_k += y_{j+1} * v_{j+1}
-        let coeff = T::copy_impl(&y_k[(j + 1, 0)]);
+        let coeff = y_k[(j + 1, 0)];
         zip!(x_k.as_mut(), work.as_ref()).for_each(|unzip!(x_i, v_i)| {
-            *x_i = add(x_i, &mul(&coeff, v_i));
+            *x_i += coeff * *v_i;
         });
 
-        // 4. Cycle the vectors for the next iteration using efficient swaps.
-        core::mem::swap(&mut v_prev, &mut v_curr);
-        core::mem::swap(&mut v_curr, &mut work);
-
-        // 5. If requested, store the regenerated basis vector.
-        if let Some(m) = v_k_regen.as_mut() {
-            m.col_mut(j + 1).copy_from(v_curr.as_ref().col(0));
-        }
+        core::mem::swap(v_prev, v_curr);
+        core::mem::swap(v_curr, work);
     }
 
-    Ok((x_k, v_k_regen))
+    Ok(())
 }

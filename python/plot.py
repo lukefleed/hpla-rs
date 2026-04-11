@@ -400,7 +400,7 @@ def generate_plots(df, output_dir, matrix_dims=None, hw_config=None):
 
 if __name__ == "__main__":
     CRITERION_DIR = "../target/criterion"
-    OUTPUT_DIR = "gemv"
+    OUTPUT_DIR = "spmv"
     MATRICES_DIR = "../matrices"
     HW_CONFIG_PATH = Path(__file__).parent / "hw_config.json"
 
@@ -409,33 +409,33 @@ if __name__ == "__main__":
 
     if df.empty:
         print("No data found! Ensure you have run 'cargo bench' and paths are correct.")
+        sys.exit(1)
+
+    print(f"Found {len(df)} configurations across {df['Matrix'].nunique()} matrices.")
+
+    if not HW_CONFIG_PATH.exists():
+        sys.stderr.write(
+            f"error: {HW_CONFIG_PATH} not found.\n"
+            f"       Run `bash stream_bench.sh` from the repo root to\n"
+            f"       measure single-core STREAM Triad bandwidth and\n"
+            f"       populate hw_config.json.\n"
+        )
+        sys.exit(1)
+
+    with open(HW_CONFIG_PATH, 'r') as f:
+        hw_config = json.load(f)
+    print(f"Loaded hardware config: STREAM Triad = {hw_config['stream_triad_GBs']:.1f} GB/s")
+
+    matrix_dims = read_mtx_dimensions(MATRICES_DIR)
+    if matrix_dims:
+        print(f"Read dimensions for {len(matrix_dims)} matrices from {MATRICES_DIR}/")
     else:
-        print(f"Found {len(df)} configurations across {df['Matrix'].nunique()} matrices.")
+        sys.stderr.write(
+            f"error: no .mtx files found in {MATRICES_DIR}/.\n"
+            f"       Run `bash download_matrices.sh` from the repo root\n"
+            f"       to populate the matrix suite.\n"
+        )
+        sys.exit(1)
 
-        # Load hardware config (optional, graceful degradation)
-        hw_config = None
-        if HW_CONFIG_PATH.exists():
-            with open(HW_CONFIG_PATH, 'r') as f:
-                hw_config = json.load(f)
-            print(f"Loaded hardware config: STREAM Triad = {hw_config['stream_triad_GBs']:.1f} GB/s")
-        else:
-            print(f"Warning: {HW_CONFIG_PATH} not found. "
-                  "Skipping roofline and bandwidth ceiling features.")
-
-        # Read matrix dimensions from .mtx files
-        matrix_dims = read_mtx_dimensions(MATRICES_DIR)
-        if matrix_dims:
-            print(f"Read dimensions for {len(matrix_dims)} matrices from {MATRICES_DIR}/")
-        else:
-            print(f"Warning: no .mtx files found in {MATRICES_DIR}/. "
-                  "Roofline and ceiling features disabled.")
-            matrix_dims = None
-
-        # Generate per-matrix bar charts (ceiling line added when possible)
-        generate_plots(df, OUTPUT_DIR,
-                       matrix_dims=matrix_dims if hw_config else None,
-                       hw_config=hw_config)
-
-        # Generate roofline plot if both hw_config and matrix_dims are available
-        if hw_config is not None and matrix_dims is not None:
-            plot_roofline(df, matrix_dims, hw_config, OUTPUT_DIR)
+    generate_plots(df, OUTPUT_DIR, matrix_dims=matrix_dims, hw_config=hw_config)
+    plot_roofline(df, matrix_dims, hw_config, OUTPUT_DIR)

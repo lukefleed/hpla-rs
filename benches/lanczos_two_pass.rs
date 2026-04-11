@@ -1,35 +1,31 @@
-//! Criterion harness for the one-pass Lanczos variant of `exp(-A)b`.
+//! Criterion harness for the two-pass Lanczos kernel computing `exp(-A)b`.
 //!
-//! Computes `y ~= exp(-A)b` by building the full Lanczos basis `V_m` in
-//! memory, solving the projected problem `g = exp(-T_m)*e_1` and returning
-//! `y = ||b|| * V_m * g`. Memory footprint is O(n*m).
-//!
-//! Pairs with `benches/lanczos_two_pass.rs`, which computes the same output
-//! vector with memory O(n) at the cost of a second Lanczos pass. Both benches
-//! share the Krylov dimension picked by the a posteriori residual estimator,
-//! so any throughput difference isolates the memory/compute trade-off between
-//! the two variants.
+//! Iterates over symmetric `.mtx` matrices in `matrices/`, determines the
+//! Krylov dimension via the a posteriori residual estimator, and benchmarks
+//! all backends under identical conditions (same matrix, same starting vector
+//! `b`, same number of Lanczos iterations).
 
 #[path = "lanczos_common/mod.rs"]
 mod common;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use faer::Par;
 use faer::dyn_stack::{MemBuffer, MemStack};
 use faer::matrix_free::LinOp;
 use faer::sparse::SparseColMat;
+use faer::Par;
 use hpla_rs::lanczos::{
-    LanczosWorkspace, Reorthogonalization, estimate_spectral_radius, exp_neg_tk, lanczos_into,
-};
-use hpla_rs::psblas::{
-    libpsblas_lanczos_execute, libpsblas_lanczos_setup, libpsblas_lanczos_teardown,
+    TwoPassWorkspace, estimate_spectral_radius, exp_neg_tk, lanczos_two_pass_into,
 };
 use hpla_rs::{load_mtx_raw, scale_values};
+use hpla_rs::psblas::{
+    libpsblas_lanczos_two_pass_execute, libpsblas_lanczos_two_pass_setup,
+    libpsblas_lanczos_two_pass_teardown,
+};
 
 use common::{probe_krylov_dim, lanczos_matrices};
 use hpla_rs::lanczos::deterministic_rhs;
 
-fn bench_lanczos(c: &mut Criterion) {
+fn bench_lanczos_two_pass(c: &mut Criterion) {
     for (name, path) in lanczos_matrices() {
         let mut raw = load_mtx_raw(&path).expect("Failed to load matrix");
 
@@ -40,7 +36,8 @@ fn bench_lanczos(c: &mut Criterion) {
         let b_vec = deterministic_rhs(raw.nrows);
         let scale = {
             let a_tmp =
-                SparseColMat::try_new_from_triplets(raw.nrows, raw.ncols, &raw.triplets).unwrap();
+                SparseColMat::try_new_from_triplets(raw.nrows, raw.ncols, &raw.triplets)
+                    .unwrap();
             let b_tmp = faer::Mat::from_fn(raw.nrows, 1, |i, _| b_vec[i]);
             let scratch_req = a_tmp.as_ref().apply_scratch(1, Par::Seq);
             let mut mem = MemBuffer::new(scratch_req);
@@ -77,49 +74,54 @@ fn bench_lanczos(c: &mut Criterion) {
             }
         );
 
-        let mut group = c.benchmark_group(format!("lanczos_{name}"));
+        let mut group = c.benchmark_group(format!("lanczos_two_pass_{name}"));
 
-        // One-pass Lanczos FLOP count for f(A)b.
+        // Two-pass Lanczos FLOP count, derived from the implementation
+        // (src/lanczos/algorithms/lanczos_two_pass.rs):
         //
-        // Pass 1 (m steps), per step, from
-        // src/lanczos/algorithms/mod.rs::lanczos_recurrence_step:
-        //   SpMV:                                          2*nnz
-        //   fused w -= beta*v_prev + alpha = v^T w:        4n
-        //   w -= alpha*v_curr:                             2n
-        //   ||w||_2:                                       2n
-        //   w *= 1/beta (normalize) + copy into V_m col:   n
-        //   Step total:                                    2*nnz + 9n
+        // Pass 1 (k steps), per step:
+        //   SpMV:               2*nnz   (1 mul + 1 add per nonzero)
+        //   w -= beta*v_prev:   2n
+        //   alpha = dot(v,w):   2n
+        //   w -= alpha*v_curr:  2n
+        //   ||w||_2:            2n
+        //   w *= 1/beta:        n
+        //   Step total:         2*nnz + 9n
         //
-        // Post-recurrence: V_m * g final accumulation (gemv, column-major):
-        //   2*m*n
+        // Pass 2 (k-1 steps), per step:
+        //   SpMV:               2*nnz
+        //   w -= beta*v_prev:   2n
+        //   w -= alpha*v_curr:  2n
+        //   w *= 1/beta:        n
+        //   x += coeff*v:       2n
+        //   Step total:         2*nnz + 7n
         //
-        // Scaling by ||b||: folded into the gemv alpha, 0 extra FLOPs.
-        // Projected problem exp(-T_m)*e_1: O(m^3), negligible for m << n.
-        //
-        // Total: m*(2*nnz + 9n) + 2*m*n = m*(2*nnz + 11n)
+        // Total: k*(2*nnz + 9n) + (k-1)*(2*nnz + 7n)
+        //      = (4k-2)*nnz + (16k-7)*n
+        //      ≈ 4k*(nnz + 4n)   for k >> 1 (lower-order terms dropped)
         group.throughput(Throughput::Elements(
-            krylov_dim as u64 * (2 * raw.nnz as u64 + 11 * raw.nrows as u64),
+            4 * krylov_dim as u64 * (raw.nnz as u64 + 4 * raw.nrows as u64),
         ));
 
         // --------------------------------------------------------
-        // faer (one-pass Lanczos for exp(-A)b)
+        // faer (two-pass Lanczos)
         // --------------------------------------------------------
         // Workspace is built once per matrix, outside `bench.iter`, so
-        // the timing window measures only the kernel: no `V_k`/scratch
-        // allocation or zero-fill per iteration. Matches the SpMV
-        // the PSBLAS `_setup`/`_execute` contract.
-        let mut ws = LanczosWorkspace::new(raw.nrows, krylov_dim);
+        // the timing window measures only the kernel: no rolling-vector
+        // allocation per iteration. Matches the SpMV steady-state
+        // accumulation pattern and the PSBLAS `_setup`/`_execute`
+        // contract.
+        let mut ws = TwoPassWorkspace::new(raw.nrows, krylov_dim);
         let mut mem = MemBuffer::new(scratch_req);
-        group.bench_with_input(BenchmarkId::new("faer", "one_pass"), &(), |bench, _| {
+        group.bench_with_input(BenchmarkId::new("faer", "two_pass"), &(), |bench, _| {
             bench.iter(|| {
                 let stack = MemStack::new(&mut mem);
-                let result = lanczos_into(
+                let result = lanczos_two_pass_into(
                     &mut ws,
                     &a_faer.as_ref(),
                     b_mat.as_ref(),
                     krylov_dim,
                     Par::Seq,
-                    Reorthogonalization::None,
                     stack,
                     exp_neg_tk,
                 );
@@ -128,10 +130,10 @@ fn bench_lanczos(c: &mut Criterion) {
         });
 
         // --------------------------------------------------------
-        // PSBLAS (one-pass Lanczos for exp(-A)b)
+        // PSBLAS (two-pass Lanczos)
         // --------------------------------------------------------
         unsafe {
-            let ctx = libpsblas_lanczos_setup(
+            let ctx = libpsblas_lanczos_two_pass_setup(
                 raw.nrows as i32,
                 raw.ncols as i32,
                 raw.nnz as i32,
@@ -143,14 +145,18 @@ fn bench_lanczos(c: &mut Criterion) {
             );
 
             if !ctx.is_null() {
-                group.bench_with_input(BenchmarkId::new("psblas", "one_pass"), &(), |bench, _| {
-                    bench.iter(|| {
-                        libpsblas_lanczos_execute(ctx);
-                        criterion::black_box(ctx);
-                    });
-                });
+                group.bench_with_input(
+                    BenchmarkId::new("psblas", "two_pass"),
+                    &(),
+                    |bench, _| {
+                        bench.iter(|| {
+                            libpsblas_lanczos_two_pass_execute(ctx);
+                            criterion::black_box(ctx);
+                        });
+                    },
+                );
 
-                libpsblas_lanczos_teardown(ctx);
+                libpsblas_lanczos_two_pass_teardown(ctx);
             }
         }
 
@@ -164,6 +170,6 @@ criterion_group!(
         .sample_size(50)
         .warm_up_time(std::time::Duration::from_secs(3))
         .measurement_time(std::time::Duration::from_secs(30));
-    targets = bench_lanczos
+    targets = bench_lanczos_two_pass
 );
 criterion_main!(benches);

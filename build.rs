@@ -15,12 +15,11 @@ fn main() {
         .output()
         .expect("Failed to execute spack command for PETSc. Is spack sourced & in your PATH?");
 
-    if !petsc_output.status.success() {
-        panic!(
-            "spack location -i petsc failed. Make sure PETSc is installed via Spack.\nError: {}",
-            String::from_utf8_lossy(&petsc_output.stderr)
-        );
-    }
+    assert!(
+        petsc_output.status.success(),
+        "spack location -i petsc failed. Make sure PETSc is installed via Spack.\nError: {}",
+        String::from_utf8_lossy(&petsc_output.stderr)
+    );
     let petsc_dir = String::from_utf8_lossy(&petsc_output.stdout)
         .trim()
         .to_string();
@@ -45,9 +44,6 @@ fn main() {
         .flag("-flto")
         .compile("petsc_wrapper");
 
-    // ----------------------------------------------------
-    // strictly use Spack for Eigen (ignore EIGEN_DIR)
-    // ----------------------------------------------------
     let eigen_output = Command::new("spack")
         .args(["location", "-i", "eigen"])
         .output()
@@ -60,9 +56,7 @@ fn main() {
         );
     }
     // Eigen is header-only: no rustc-link-lib, rustc-link-search, or rpath needed.
-    let eigen_dir = PathBuf::from(
-        String::from_utf8_lossy(&eigen_output.stdout).trim(),
-    );
+    let eigen_dir = PathBuf::from(String::from_utf8_lossy(&eigen_output.stdout).trim());
     let eigen_include = eigen_dir.join("include/eigen3");
     cc::Build::new()
         .cpp(true)
@@ -85,22 +79,21 @@ fn main() {
         .output()
         .expect("Failed to execute spack command for MKL. Is spack sourced & in your PATH?");
 
-    if !mkl_output.status.success() {
-        panic!(
-            "spack location -i intel-oneapi-mkl failed. Make sure MKL is installed via Spack.\nError: {}",
-            String::from_utf8_lossy(&mkl_output.stderr)
-        );
-    }
-    let mkl_prefix = PathBuf::from(
-        String::from_utf8_lossy(&mkl_output.stdout).trim(),
+    assert!(
+        mkl_output.status.success(),
+        "spack location -i intel-oneapi-mkl failed. Make sure MKL is installed via Spack.\nError: {}",
+        String::from_utf8_lossy(&mkl_output.stderr)
     );
+    let mkl_prefix = PathBuf::from(String::from_utf8_lossy(&mkl_output.stdout).trim());
     let mkl_include = mkl_prefix.join("mkl/latest/include");
     let mkl_lib = mkl_prefix.join("mkl/latest/lib");
 
     println!("cargo::rustc-link-search=native={}", mkl_lib.display());
     // Force the linker to keep all MKL libraries even if not directly referenced by our object files
     // We pass them as a single comma-separated linker argument to bypass rustc reordering
-    println!("cargo::rustc-link-arg=-Wl,--no-as-needed,-lmkl_intel_lp64,-lmkl_sequential,-lmkl_core,--as-needed");
+    println!(
+        "cargo::rustc-link-arg=-Wl,--no-as-needed,-lmkl_intel_lp64,-lmkl_sequential,-lmkl_core,--as-needed"
+    );
     println!("cargo::rustc-link-lib=dylib=pthread");
     println!("cargo::rustc-link-lib=dylib=m");
     println!("cargo::rustc-link-lib=dylib=dl");
@@ -126,15 +119,12 @@ fn main() {
         .output()
         .expect("Failed to execute spack command for PSBLAS. Is spack sourced & in your PATH?");
 
-    if !psblas_output.status.success() {
-        panic!(
-            "spack location -i psblas failed. Make sure PSBLAS is installed via Spack.\nError: {}",
-            String::from_utf8_lossy(&psblas_output.stderr)
-        );
-    }
-    let psblas_dir = PathBuf::from(
-        String::from_utf8_lossy(&psblas_output.stdout).trim(),
+    assert!(
+        psblas_output.status.success(),
+        "spack location -i psblas failed. Make sure PSBLAS is installed via Spack.\nError: {}",
+        String::from_utf8_lossy(&psblas_output.stderr)
     );
+    let psblas_dir = PathBuf::from(String::from_utf8_lossy(&psblas_output.stdout).trim());
     let psblas_include = psblas_dir.join("include");
     let psblas_lib = psblas_dir.join("lib");
 
@@ -143,12 +133,11 @@ fn main() {
         .output()
         .expect("Failed to execute spack command for OpenMPI. Is spack sourced & in your PATH?");
 
-    if !mpi_output.status.success() {
-        panic!(
-            "spack location -i openmpi failed. Make sure OpenMPI is installed via Spack.\nError: {}",
-            String::from_utf8_lossy(&mpi_output.stderr)
-        );
-    }
+    assert!(
+        mpi_output.status.success(),
+        "spack location -i openmpi failed. Make sure OpenMPI is installed via Spack.\nError: {}",
+        String::from_utf8_lossy(&mpi_output.stderr)
+    );
     let mpi_dir = String::from_utf8_lossy(&mpi_output.stdout)
         .trim()
         .to_string();
@@ -176,8 +165,15 @@ fn main() {
 
     let psblas_modules = psblas_dir.join("modules");
 
+    // gfortran deposits .mod files in the cwd by default. Redirect them
+    // to OUT_DIR via -J so the crate root stays clean and parallel
+    // builds do not race on shared .mod files.
+    let fortran_mod_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
+    let fortran_mod_flag = format!("-J{fortran_mod_dir}");
+
+    // One-pass Lanczos wrapper.
     cc::Build::new()
-        .file("ffi/lanczos/psblas.f90")
+        .file("ffi/lanczos/psblas_lanczos.f90")
         .include(&psblas_modules)
         .compiler("gfortran")
         .flag("-O3")
@@ -185,8 +181,23 @@ fn main() {
         .flag("-mtune=native")
         .flag("-ffast-math")
         .flag("-ffat-lto-objects")
+        .flag(&fortran_mod_flag)
         .flag("-Wno-unused-dummy-argument") // stub has no-op functions; remove when implemented
         .compile("psblas_lanczos_wrapper");
+
+    // Two-pass Lanczos wrapper for f(A)b = exp(-A)b.
+    cc::Build::new()
+        .file("ffi/lanczos/psblas_lanczos_two_pass.f90")
+        .include(&psblas_modules)
+        .compiler("gfortran")
+        .flag("-O3")
+        .flag("-march=native")
+        .flag("-mtune=native")
+        .flag("-ffast-math")
+        .flag("-ffat-lto-objects")
+        .flag(&fortran_mod_flag)
+        .flag("-Wno-unused-dummy-argument") // stub has no-op functions; remove when implemented
+        .compile("psblas_lanczos_two_pass_wrapper");
 
     // Use link-arg instead of link-lib: rustc discards static archives when no
     // Rust FFI symbol references them directly, breaking our C++ wrapper deps.
@@ -214,7 +225,8 @@ fn main() {
     println!("cargo::rerun-if-changed=ffi/spmv/eigen.cpp");
     println!("cargo::rerun-if-changed=ffi/spmv/mkl.c");
     println!("cargo::rerun-if-changed=ffi/spmv/psblas.cpp");
-    println!("cargo::rerun-if-changed=ffi/lanczos/psblas.f90");
+    println!("cargo::rerun-if-changed=ffi/lanczos/psblas_lanczos.f90");
+    println!("cargo::rerun-if-changed=ffi/lanczos/psblas_lanczos_two_pass.f90");
     // Force rebuild when spack environment changes (e.g. package reinstall)
     println!("cargo::rerun-if-env-changed=SPACK_ROOT");
 }

@@ -21,6 +21,16 @@ pub(crate) enum LanczosErrorKind {
         actual: usize,
     },
 
+    /// A requested dimension exceeds the capacity pre-allocated in a
+    /// workspace. Distinct from `ParameterMismatch` because the workspace
+    /// value is an upper bound, not an equality constraint.
+    #[error("capacity exceeded: `{param_name}` requested {requested}, but workspace was built with cap {cap}")]
+    CapacityExceeded {
+        param_name: String,
+        cap: usize,
+        requested: usize,
+    },
+
     /// The user-provided f(T_k) solver returned an error.
     #[error("f(T_k) solver failed: {0}")]
     SolverError(String),

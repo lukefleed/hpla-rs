@@ -1,13 +1,42 @@
-//! Core library module handling matrix I/O and Faer SpMV kernels.
+//! Crate root for the hpla-rs benchmarking suite.
 //!
-//! Provides the data structures required for Matrix Market file parsing
-//! and the foundational `spmv_faer` benchmark kernel.
+//! Hosts the Matrix Market loader (`load_mtx_raw`, `RawMatrix`, `Symmetry`),
+//! the faer SpMV kernels (`spmv_faer`, `spmv_faer_csr`), the `lanczos` module,
+//! and the FFI shims for `eigen`, `mkl`, `petsc`, `psblas`.
 
 pub mod eigen;
 pub mod lanczos;
 pub mod mkl;
 pub mod petsc;
 pub mod psblas;
+
+#[cfg(test)]
+mod tests;
+
+// Counting global allocator, test-only, powering the zero-allocation
+// regression test in `lanczos::algorithms::lanczos::tests`.
+#[cfg(test)]
+#[global_allocator]
+static COUNTING_ALLOCATOR: crate::lanczos::alloc_counter::CountingAllocator =
+    crate::lanczos::alloc_counter::CountingAllocator;
+
+/// Names of the matrices used by the Lanczos benchmarks and by their
+/// equivalence tests. Each entry is the stem of a `.mtx` file expected
+/// to live under `matrices/` at bench time (the layout produced by
+/// `download_matrices.sh`).
+///
+/// The suite is curated so that every matrix has small or zero mean
+/// diagonal, which is the precondition for the Saad a posteriori error
+/// estimator on `exp(-A)v` to be meaningful at every Krylov dimension.
+/// See `docs/superpowers/specs/` and `README.md` for the rationale.
+pub const LANCZOS_SUITE: &[&str] = &[
+    "kron_g500-logn18",
+    "coPapersDBLP",
+    "thermal2",
+    "as-Skitter",
+    "roadNet-CA",
+    "delaunay_n22",
+];
 
 use std::fs::File;
 use std::io::BufRead;
@@ -19,6 +48,27 @@ use faer::sparse::linalg::matmul::sparse_dense_matmul;
 use faer::sparse::{SparseColMat, SparseRowMat, Triplet};
 use faer::{Accum, Par};
 use matrix_market_rs::MtxData;
+
+/// Divides every numeric value in `raw` by `scale`, in place. Touches the
+/// CSR `values`, the CSC `csc_values`, and the faer `triplets` together so
+/// the three representations remain consistent. `O(nnz)`.
+///
+/// This realises the scalar `tau` of Saad 1992, formula (4): after calling
+/// `scale_values(&mut raw, s)` the Lanczos kernel running on `raw` computes
+/// `exp(-raw/s) v`, which is `exp(tau A) v` with `tau = -1/s`, the Krylov
+/// subspace being invariant under scaling of `A`.
+pub fn scale_values(raw: &mut RawMatrix, scale: f64) {
+    let inv = 1.0 / scale;
+    for v in raw.values.iter_mut() {
+        *v *= inv;
+    }
+    for v in raw.csc_values.iter_mut() {
+        *v *= inv;
+    }
+    for t in raw.triplets.iter_mut() {
+        t.val *= inv;
+    }
+}
 
 pub struct RawMatrix {
     pub nrows: usize,
@@ -33,26 +83,39 @@ pub struct RawMatrix {
     pub triplets: Vec<Triplet<u32, u32, f64>>, // For Faer CSC
 }
 
+/// Symmetry classification extracted from a Matrix Market header.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Symmetry {
+    General,
+    Symmetric,
+    Skew,
+}
+
 // Helper to determine symmetry reading the raw header
-pub fn detect_symmetry(path: &Path) -> (bool, bool) {
+pub fn detect_symmetry(path: &Path) -> Symmetry {
     if let Ok(file) = File::open(path) {
         let mut reader = BufReader::new(file);
         let mut line = String::new();
         if reader.read_line(&mut line).is_ok() {
             let lower = line.to_lowercase();
             if lower.starts_with("%%matrixmarket") {
-                let is_skew = lower.contains("skew-symmetric");
-                let is_sym =
-                    !is_skew && (lower.contains("symmetric") || lower.contains("hermitian"));
-                return (is_sym, is_skew);
+                if lower.contains("skew-symmetric") {
+                    return Symmetry::Skew;
+                }
+                if lower.contains("symmetric") || lower.contains("hermitian") {
+                    return Symmetry::Symmetric;
+                }
+                return Symmetry::General;
             }
         }
     }
-    (false, false)
+    Symmetry::General
 }
 
 pub fn load_mtx_raw(path: &Path) -> Result<RawMatrix, String> {
-    let (is_symmetric, is_skew) = detect_symmetry(path);
+    let sym = detect_symmetry(path);
+    let is_symmetric = matches!(sym, Symmetry::Symmetric);
+    let is_skew = matches!(sym, Symmetry::Skew);
     let data = MtxData::<f64>::from_file(path).map_err(|e| format!("{}", e))?;
 
     let MtxData::Sparse([nrows, ncols], coords, values, _) = data else {
@@ -179,464 +242,3 @@ pub fn spmv_faer_csr(a: &SparseRowMat<u32, f64>, x: &Col<f64>, y: &mut Col<f64>)
     );
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Computes the relative L2 error between two vectors.
-    ///
-    /// Returns `||actual - reference||_2 / ||reference||_2`.
-    /// If the reference norm is zero, returns the absolute norm of the
-    /// difference instead.
-    fn relative_l2_error(actual: &[f64], reference: &[f64]) -> f64 {
-        let diff_norm: f64 = actual
-            .iter()
-            .zip(reference)
-            .map(|(a, r)| (a - r).powi(2))
-            .sum::<f64>()
-            .sqrt();
-        let ref_norm: f64 = reference.iter().map(|r| r.powi(2)).sum::<f64>().sqrt();
-        if ref_norm == 0.0 {
-            diff_norm
-        } else {
-            diff_norm / ref_norm
-        }
-    }
-
-    /// Checks all backends produce the same y = A*x (relative L2 error).
-    /// Runs on every .mtx in matrices/.
-    #[test]
-    fn test_backend_numerical_equivalence() -> anyhow::Result<()> {
-        let mut matrices: Vec<_> = std::fs::read_dir("matrices")?
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| {
-                entry
-                    .path()
-                    .extension()
-                    .is_some_and(|ext| ext == "mtx")
-            })
-            .map(|entry| entry.path())
-            .collect();
-        matrices.sort();
-
-        anyhow::ensure!(!matrices.is_empty(), "no .mtx files found in matrices/");
-
-        let tol = 1e-4;
-
-        for path in &matrices {
-            let name = path
-                .file_stem()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            eprintln!("\n=== {name} ===");
-
-            let raw = load_mtx_raw(path)
-                .map_err(|e| anyhow::anyhow!("load_mtx_raw({name}): {e}"))?;
-
-            // --- Faer reference (CSC) ---
-            let a_faer =
-                SparseColMat::try_new_from_triplets(raw.nrows, raw.ncols, &raw.triplets)
-                    .map_err(|e| anyhow::anyhow!("faer SparseColMat({name}): {e:?}"))?;
-            let x_faer: Col<f64> = Col::from_fn(raw.ncols, |_| 1.0);
-            let mut y_faer: Col<f64> = Col::zeros(raw.nrows);
-            spmv_faer(&a_faer, &x_faer, &mut y_faer);
-
-            let faer_ref: Vec<f64> = (0..raw.nrows).map(|i| y_faer[i]).collect();
-            let faer_norm: f64 = faer_ref.iter().map(|v| v * v).sum::<f64>().sqrt();
-            assert!(
-                faer_norm > 0.0,
-                "{name}: faer y is all zeros — matrix may be empty"
-            );
-
-            // --- Faer CSR ---
-            {
-                let a_faer_csr =
-                    SparseRowMat::try_new_from_triplets(raw.nrows, raw.ncols, &raw.triplets)
-                        .map_err(|e| anyhow::anyhow!("faer SparseRowMat({name}): {e:?}"))?;
-                let mut y_csr: Col<f64> = Col::zeros(raw.nrows);
-                spmv_faer_csr(&a_faer_csr, &x_faer, &mut y_csr);
-                let csr_result: Vec<f64> = (0..raw.nrows).map(|i| y_csr[i]).collect();
-                let err = relative_l2_error(&csr_result, &faer_ref);
-                eprintln!("  faer/csr:         rel L2 = {err:.2e}");
-                assert!(
-                    err < tol,
-                    "{name}: faer/csr diverged: rel L2 = {err:.2e}"
-                );
-            }
-
-            // --- PETSc (CSR, inodes disabled) ---
-            {
-                let mut y_buf = vec![0.0f64; raw.nrows];
-                unsafe {
-                    let ctx = crate::petsc::libpetsc_spmv_setup(
-                        raw.nrows as i32,
-                        raw.ncols as i32,
-                        raw.nnz as i32,
-                        raw.row_ptr.as_ptr(),
-                        raw.col_idx.as_ptr(),
-                        raw.values.as_ptr(),
-                        1, // disable inodes
-                    );
-                    crate::petsc::libpetsc_spmv_execute(ctx);
-                    crate::petsc::libpetsc_spmv_get_y(
-                        ctx,
-                        y_buf.as_mut_ptr(),
-                        raw.nrows as i32,
-                    );
-                    crate::petsc::libpetsc_spmv_teardown(ctx);
-                }
-                let err = relative_l2_error(&y_buf, &faer_ref);
-                eprintln!("  petsc/csr_raw:    rel L2 = {err:.2e}");
-                assert!(
-                    err < tol,
-                    "{name}: petsc/csr_raw diverged: rel L2 = {err:.2e}"
-                );
-            }
-
-            // --- PETSc (CSR, inodes enabled) ---
-            {
-                let mut y_buf = vec![0.0f64; raw.nrows];
-                unsafe {
-                    let ctx = crate::petsc::libpetsc_spmv_setup(
-                        raw.nrows as i32,
-                        raw.ncols as i32,
-                        raw.nnz as i32,
-                        raw.row_ptr.as_ptr(),
-                        raw.col_idx.as_ptr(),
-                        raw.values.as_ptr(),
-                        0, // enable inodes
-                    );
-                    crate::petsc::libpetsc_spmv_execute(ctx);
-                    crate::petsc::libpetsc_spmv_get_y(
-                        ctx,
-                        y_buf.as_mut_ptr(),
-                        raw.nrows as i32,
-                    );
-                    crate::petsc::libpetsc_spmv_teardown(ctx);
-                }
-                let err = relative_l2_error(&y_buf, &faer_ref);
-                eprintln!("  petsc/csr_inodes: rel L2 = {err:.2e}");
-                assert!(
-                    err < tol,
-                    "{name}: petsc/csr_inodes diverged: rel L2 = {err:.2e}"
-                );
-            }
-
-            // --- Eigen (CSC) ---
-            {
-                let mut y_buf = vec![0.0f64; raw.nrows];
-                unsafe {
-                    let ctx = crate::eigen::libeigen_spmv_setup(
-                        raw.nrows as i32,
-                        raw.ncols as i32,
-                        raw.nnz as i32,
-                        raw.col_ptr.as_ptr(),
-                        raw.row_idx.as_ptr(),
-                        raw.csc_values.as_ptr(),
-                    );
-                    crate::eigen::libeigen_spmv_execute(ctx);
-                    crate::eigen::libeigen_spmv_get_y(
-                        ctx,
-                        y_buf.as_mut_ptr(),
-                        raw.nrows as i32,
-                    );
-                    crate::eigen::libeigen_spmv_teardown(ctx);
-                }
-                let err = relative_l2_error(&y_buf, &faer_ref);
-                eprintln!("  eigen/csc_map:    rel L2 = {err:.2e}");
-                assert!(
-                    err < tol,
-                    "{name}: eigen/csc_map diverged: rel L2 = {err:.2e}"
-                );
-            }
-
-            // --- Eigen (CSR, cross-format control) ---
-            {
-                let mut y_buf = vec![0.0f64; raw.nrows];
-                unsafe {
-                    let ctx = crate::eigen::libeigen_csr_spmv_setup(
-                        raw.nrows as i32,
-                        raw.ncols as i32,
-                        raw.nnz as i32,
-                        raw.row_ptr.as_ptr(),
-                        raw.col_idx.as_ptr(),
-                        raw.values.as_ptr(),
-                    );
-                    crate::eigen::libeigen_csr_spmv_execute(ctx);
-                    crate::eigen::libeigen_csr_spmv_get_y(
-                        ctx,
-                        y_buf.as_mut_ptr(),
-                        raw.nrows as i32,
-                    );
-                    crate::eigen::libeigen_csr_spmv_teardown(ctx);
-                }
-                let err = relative_l2_error(&y_buf, &faer_ref);
-                eprintln!("  eigen/csr_map:    rel L2 = {err:.2e}");
-                assert!(
-                    err < tol,
-                    "{name}: eigen/csr_map diverged: rel L2 = {err:.2e}"
-                );
-            }
-
-            // --- MKL (CSR, Inspection-Execution) ---
-            {
-                let mut y_buf = vec![0.0f64; raw.nrows];
-                unsafe {
-                    let ctx = crate::mkl::libmkl_spmv_setup(
-                        raw.nrows as i32,
-                        raw.ncols as i32,
-                        raw.nnz as i32,
-                        raw.row_ptr.as_ptr(),
-                        raw.col_idx.as_ptr(),
-                        raw.values.as_ptr(),
-                    );
-                    crate::mkl::libmkl_spmv_execute(ctx);
-                    crate::mkl::libmkl_spmv_get_y(
-                        ctx,
-                        y_buf.as_mut_ptr(),
-                        raw.nrows as i32,
-                    );
-                    crate::mkl::libmkl_spmv_teardown(ctx);
-                }
-                let err = relative_l2_error(&y_buf, &faer_ref);
-                eprintln!("  mkl/csr_ie:       rel L2 = {err:.2e}");
-                assert!(
-                    err < tol,
-                    "{name}: mkl/csr_ie diverged: rel L2 = {err:.2e}"
-                );
-            }
-
-            // --- MKL (CSC, Inspection-Execution, cross-format control) ---
-            {
-                let mut y_buf = vec![0.0f64; raw.nrows];
-                unsafe {
-                    let ctx = crate::mkl::libmkl_csc_spmv_setup(
-                        raw.nrows as i32,
-                        raw.ncols as i32,
-                        raw.nnz as i32,
-                        raw.col_ptr.as_ptr(),
-                        raw.row_idx.as_ptr(),
-                        raw.csc_values.as_ptr(),
-                    );
-                    crate::mkl::libmkl_csc_spmv_execute(ctx);
-                    crate::mkl::libmkl_csc_spmv_get_y(
-                        ctx,
-                        y_buf.as_mut_ptr(),
-                        raw.nrows as i32,
-                    );
-                    crate::mkl::libmkl_csc_spmv_teardown(ctx);
-                }
-                let err = relative_l2_error(&y_buf, &faer_ref);
-                eprintln!("  mkl/csc_ie:       rel L2 = {err:.2e}");
-                assert!(
-                    err < tol,
-                    "{name}: mkl/csc_ie diverged: rel L2 = {err:.2e}"
-                );
-            }
-
-            // --- PSBLAS (CSR) ---
-            {
-                let mut y_buf = vec![0.0f64; raw.nrows];
-                unsafe {
-                    let ctx = crate::psblas::libpsblas_spmv_setup(
-                        raw.nrows as i32,
-                        raw.ncols as i32,
-                        raw.nnz as i32,
-                        raw.row_ptr.as_ptr(),
-                        raw.col_idx.as_ptr(),
-                        raw.values.as_ptr(),
-                    );
-                    crate::psblas::libpsblas_spmv_execute(ctx);
-                    crate::psblas::libpsblas_spmv_get_y(
-                        ctx,
-                        y_buf.as_mut_ptr(),
-                        raw.nrows as i32,
-                    );
-                    crate::psblas::libpsblas_spmv_teardown(ctx);
-                }
-                let err = relative_l2_error(&y_buf, &faer_ref);
-                eprintln!("  psblas/csr:       rel L2 = {err:.2e}");
-                assert!(
-                    err < tol,
-                    "{name}: psblas/csr diverged: rel L2 = {err:.2e}"
-                );
-            }
-
-            // --- PSBLAS (CSC) ---
-            {
-                let mut y_buf = vec![0.0f64; raw.nrows];
-                unsafe {
-                    let ctx = crate::psblas::libpsblas_csc_spmv_setup(
-                        raw.nrows as i32,
-                        raw.ncols as i32,
-                        raw.nnz as i32,
-                        raw.col_ptr.as_ptr(),
-                        raw.row_idx.as_ptr(),
-                        raw.csc_values.as_ptr(),
-                    );
-                    crate::psblas::libpsblas_spmv_execute(ctx);
-                    crate::psblas::libpsblas_spmv_get_y(
-                        ctx,
-                        y_buf.as_mut_ptr(),
-                        raw.nrows as i32,
-                    );
-                    crate::psblas::libpsblas_spmv_teardown(ctx);
-                }
-                let err = relative_l2_error(&y_buf, &faer_ref);
-                eprintln!("  psblas/csc:       rel L2 = {err:.2e}");
-                assert!(
-                    err < tol,
-                    "{name}: psblas/csc diverged: rel L2 = {err:.2e}"
-                );
-            }
-        }
-
-        eprintln!("\nAll backends match Faer reference across {} matrices.", matrices.len());
-        Ok(())
-    }
-
-    /// Checks that the PSBLAS two-pass Lanczos produces the same exp(-A)b
-    /// as the Faer reference. Runs on every symmetric .mtx in matrices/.
-    /// Skips gracefully if the PSBLAS stub returns a null context.
-    #[test]
-    fn test_lanczos_backend_equivalence() -> anyhow::Result<()> {
-        use faer::dyn_stack::{MemBuffer, MemStack};
-        use faer::matrix_free::LinOp;
-        use faer::Par;
-        use rand::rngs::StdRng;
-        use rand::{Rng, SeedableRng};
-
-        use crate::lanczos::{determine_krylov_dim, exp_neg_tk_solver, lanczos_two_pass};
-        use crate::psblas::{
-            libpsblas_lanczos_execute, libpsblas_lanczos_get_y, libpsblas_lanczos_setup,
-            libpsblas_lanczos_teardown,
-        };
-
-        let mut matrices: Vec<_> = std::fs::read_dir("matrices")?
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| {
-                entry
-                    .path()
-                    .extension()
-                    .is_some_and(|ext| ext == "mtx")
-            })
-            .map(|entry| entry.path())
-            .collect();
-        matrices.sort();
-
-        anyhow::ensure!(!matrices.is_empty(), "no .mtx files found in matrices/");
-
-        let tol = 1e-8;
-        let max_k = 100;
-        let saad_tol = 1e-10;
-        let mut sym_count = 0;
-
-        for path in &matrices {
-            let name = path
-                .file_stem()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_default();
-
-            let (is_sym, _) = detect_symmetry(path);
-            if !is_sym {
-                eprintln!("  {name}: skipped (not symmetric)");
-                continue;
-            }
-            sym_count += 1;
-            eprintln!("\n=== {name} (Lanczos) ===");
-
-            let raw = load_mtx_raw(path)
-                .map_err(|e| anyhow::anyhow!("load_mtx_raw({name}): {e}"))?;
-
-            let a_faer =
-                SparseColMat::try_new_from_triplets(raw.nrows, raw.ncols, &raw.triplets)
-                    .map_err(|e| anyhow::anyhow!("faer SparseColMat({name}): {e:?}"))?;
-
-            // Deterministic starting vector (same seed as bench)
-            let mut rng = StdRng::seed_from_u64(42);
-            let b_vec: Vec<f64> = (0..raw.nrows).map(|_| rng.random::<f64>()).collect();
-            let b_mat = faer::Mat::from_fn(raw.nrows, 1, |i, _| b_vec[i]);
-
-            let scratch_req = a_faer.as_ref().apply_scratch(1, Par::Seq);
-
-            // Determine Krylov dimension
-            let krylov_dim = {
-                let mut mem = MemBuffer::new(scratch_req);
-                let stack = MemStack::new(&mut mem);
-                let (m, _) = determine_krylov_dim(
-                    &a_faer.as_ref(),
-                    b_mat.as_ref(),
-                    max_k,
-                    saad_tol,
-                    Par::Seq,
-                    stack,
-                )
-                .map_err(|e| anyhow::anyhow!("{name}: determine_krylov_dim failed: {e}"))?;
-                m.max(1)
-            };
-            eprintln!("  krylov_dim = {krylov_dim}");
-
-            // --- Faer reference ---
-            let faer_ref: Vec<f64> = {
-                let mut mem = MemBuffer::new(scratch_req);
-                let stack = MemStack::new(&mut mem);
-                let result = lanczos_two_pass(
-                    &a_faer.as_ref(),
-                    b_mat.as_ref(),
-                    krylov_dim,
-                    Par::Seq,
-                    stack,
-                    exp_neg_tk_solver,
-                )
-                .map_err(|e| anyhow::anyhow!("{name}: faer lanczos_two_pass failed: {e}"))?;
-                (0..raw.nrows).map(|i| result[(i, 0)]).collect()
-            };
-
-            let faer_norm: f64 = faer_ref.iter().map(|v| v * v).sum::<f64>().sqrt();
-            assert!(
-                faer_norm > 0.0,
-                "{name}: faer Lanczos result is all zeros"
-            );
-
-            // --- PSBLAS ---
-            {
-                let mut y_buf = vec![0.0f64; raw.nrows];
-                unsafe {
-                    let ctx = libpsblas_lanczos_setup(
-                        raw.nrows as i32,
-                        raw.ncols as i32,
-                        raw.nnz as i32,
-                        raw.row_ptr.as_ptr(),
-                        raw.col_idx.as_ptr(),
-                        raw.values.as_ptr(),
-                        b_vec.as_ptr(),
-                        krylov_dim as i32,
-                    );
-                    if ctx.is_null() {
-                        eprintln!("  psblas/two_pass:  skipped (stub returned null)");
-                        continue;
-                    }
-                    libpsblas_lanczos_execute(ctx);
-                    libpsblas_lanczos_get_y(
-                        ctx,
-                        y_buf.as_mut_ptr(),
-                        raw.nrows as i32,
-                    );
-                    libpsblas_lanczos_teardown(ctx);
-                }
-                let err = relative_l2_error(&y_buf, &faer_ref);
-                eprintln!("  psblas/two_pass:  rel L2 = {err:.2e}");
-                assert!(
-                    err < tol,
-                    "{name}: psblas/two_pass diverged: rel L2 = {err:.2e}"
-                );
-            }
-        }
-
-        anyhow::ensure!(sym_count > 0, "no symmetric matrices found in matrices/");
-        eprintln!(
-            "\nLanczos backends match Faer reference across {sym_count} symmetric matrices."
-        );
-        Ok(())
-    }
-}

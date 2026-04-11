@@ -1,6 +1,12 @@
 # Single-Threaded Sparse Kernel Benchmarks
 
-Compares sparse matrix kernel performance across Rust and C/C++/Fortran numerical libraries on a single core. Two kernels are benchmarked: SpMV (`y += A*x`) and two-pass Lanczos for computing `exp(-A)b`.
+Compares sparse matrix kernel performance across Rust and C/C++/Fortran numerical libraries on a single core. Three kernels are benchmarked:
+
+1. **SpMV**: `y += A*x` (BLAS-style sparse matrix-vector product).
+2. **One-pass Lanczos for `exp(-A)b`**: computes the matrix exponential applied to a vector by materializing the full Lanczos basis `V_m` in memory, then forming `V_m * exp(-T_m) * e_1 * ||b||`. Memory footprint O(n·m).
+3. **Two-pass Lanczos for `exp(-A)b`**: same output as kernel 2, trading one extra pass of `m` matrix-vector products for O(n) memory (the basis is discarded in pass 1 and regenerated on the fly in pass 2).
+
+Kernels 2 and 3 produce the same output vector, so the comparison isolates the memory/compute trade-off described in Section 2.4 of the companion paper.
 
 ## SpMV Backends
 
@@ -21,12 +27,40 @@ Faer, Eigen, MKL, and PSBLAS each provide both CSR and CSC variants to isolate t
 
 ## Lanczos Backends
 
+Two bench binaries, one per kernel. Both iterate the same dedicated matrix suite and share the Krylov dimension determined adaptively per matrix via the Saad (1992) a posteriori error estimate.
+
+### Matrix suite
+
+The Lanczos benches use a dedicated set of symmetric sparse matrices whose mean diagonal is zero or small, so the Saad a posteriori error estimator on `exp(-A)b` is meaningful at every Krylov dimension. This excludes raw FEM stiffness matrices, whose large self-stiffness diagonal entries make `exp(-alpha_1)` underflow at the first Lanczos step. The list lives in `src/lib.rs::LANCZOS_SUITE` and is shared between the benches and the equivalence tests.
+
+| Matrix | SuiteSparse group | Class |
+|---|---|---|
+| `kron_g500-logn18` | `DIMACS10` | synthetic Kronecker graph |
+| `coPapersDBLP` | `DIMACS10` | bibliometric co-citation graph |
+| `thermal2` | `Schmid` | thermal diffusion PDE |
+| `as-Skitter` | `SNAP` | internet AS topology |
+| `roadNet-CA` | `SNAP` | road network |
+| `delaunay_n22` | `DIMACS10` | random planar triangulation |
+
+The first run of `./download_matrices.sh` after a clean checkout downloads any missing matrices.
+
+### One-pass Lanczos for `exp(-A)b` (`cargo bench --bench lanczos`)
+
+| Configuration | Library | Language |
+|---------------|---------|----------|
+| `faer/one_pass` | [faer](https://github.com/sarah-quinones/faer-rs) 0.24 | Rust |
+| `psblas/one_pass` | [PSBLAS](https://github.com/sfilippone/psblas3) | Fortran |
+
+Throughput metric: `m * (2*nnz + 11*n)` FLOPs per iteration, covering the `m`-step recurrence (`2*nnz + 9n` per step) and the final `V_m * g` gemv (`2*m*n`).
+
+### Two-pass Lanczos for `exp(-A)b` (`cargo bench --bench lanczos_two_pass`)
+
 | Configuration | Library | Language |
 |---------------|---------|----------|
 | `faer/two_pass` | [faer](https://github.com/sarah-quinones/faer-rs) 0.24 | Rust |
 | `psblas/two_pass` | [PSBLAS](https://github.com/sfilippone/psblas3) | Fortran |
 
-Lanczos benchmarks run only on symmetric matrices. The Krylov subspace dimension is determined adaptively per matrix via the Saad (1992) a posteriori error estimate. Throughput metric: `4k * (nnz + 4n)` FLOPs, covering both SpMV and vector recurrence work across two Lanczos passes.
+Throughput metric: `4k * (nnz + 4n)` FLOPs per iteration, covering both SpMV and vector recurrence work across the two Lanczos passes.
 
 ## Target Hardware
 
@@ -102,7 +136,7 @@ C/C++ wrappers compile with clang `-flto`. Combined with Cargo `lto = "fat"`, th
 
 **SpMV:** Criterion runs 100 samples per backend, 3 s warm-up, 20 s measurement. Throughput: `2 * nnz` FLOPs per iteration.
 
-**Lanczos:** 50 samples, 3 s warm-up, 30 s measurement. Throughput: `4k * (nnz + 4n)` FLOPs per iteration, where k is the adaptively determined Krylov dimension.
+**Lanczos (one-pass and two-pass):** 50 samples, 3 s warm-up, 30 s measurement. Throughput: `m * (2*nnz + 11*n)` for one-pass, `4k * (nnz + 4n)` for two-pass, where `m = k` is the adaptively determined Krylov dimension shared between the two benches.
 
 ### Compiler Profile
 
@@ -112,7 +146,7 @@ C/C++ wrappers compile with clang `-flto`. Combined with Cargo `lto = "fat"`, th
 | C/C++ FFI wrappers (`ffi/spmv/`) | clang / clang++ | `-O3 -march=native -mtune=native -ffast-math -flto` |
 | Fortran FFI wrappers (`ffi/lanczos/`) | gfortran | `-O3 -march=native -mtune=native -ffast-math -ffat-lto-objects` |
 | Rust (faer + harness) | rustc (LLVM) | `opt-level=3, lto="fat", codegen-units=1` |
-| MKL | Intel (precompiled) | — |
+| MKL | Intel (precompiled) | n/a |
 
 | Setting | Value |
 |---------|-------|

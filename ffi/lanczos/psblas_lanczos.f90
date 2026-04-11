@@ -1,15 +1,20 @@
-! PSBLAS two-pass Lanczos stub.
+! PSBLAS one-pass Lanczos stub for f(A)b.
 !
-! Rust FFI expects these four bind(C) symbols with exactly these signatures.
+! Rust FFI expects these four bind(C) symbols with exactly these signatures,
+! matching the libpsblas_lanczos_two_pass_* family modulo the name prefix.
 ! setup() must return c_null_ptr or a valid opaque pointer.
-! execute() must be idempotent (Criterion calls it hundreds of times).
 ! get_y() copies the result into a caller-owned buffer (double*, length len).
 ! teardown() must use psb_c_exit_ctxt, not psb_c_exit (avoids MPI_Finalize).
 !
 ! All arrays from Rust are 0-based (int32 indices, double values).
 ! Integer kinds follow PSBLAS conventions: psb_c_ipk_ for counts/sizes.
+!
+! Every O(n) and O(n*k) buffer belongs to the context allocated in
+! setup; execute reuses them without any fresh allocation. Criterion's
+! timing window measures execute in isolation, matching the faer
+! lanczos_into / lanczos_two_pass_into allocation policy.
 
-module psblas_lanczos_stub
+module psblas_lanczos
    use iso_c_binding
    use psb_cbind_const_mod
    implicit none
@@ -17,7 +22,7 @@ contains
 
    ! Rust passes CSR arrays with 0-based indices (int32_t*, double*).
    ! The SpMV wrapper already calls psb_c_set_index_base(0), and checks
-   ! MPI_Initialized to skip MPI_Init if already done -- same pattern here.
+   ! MPI_Initialized to skip MPI_Init if already done, same pattern here.
    ! Returns an opaque pointer that Rust stores as *mut c_void; c_null_ptr
    ! signals the benchmark harness to skip this backend.
    function libpsblas_lanczos_setup(nrows, ncols, nnz, &
@@ -60,4 +65,4 @@ contains
       type(c_ptr), value, intent(in) :: ctx
    end subroutine libpsblas_lanczos_teardown
 
-end module psblas_lanczos_stub
+end module psblas_lanczos

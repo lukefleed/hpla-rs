@@ -6,7 +6,7 @@ use std::os::raw::c_double;
 
 /// Opaque struct representing the C++ side internal context.
 #[repr(C)]
-pub struct EigenBenchContext {
+pub struct EigenCscSpmv {
     _private: [u8; 0],
 }
 
@@ -18,16 +18,16 @@ unsafe extern "C" {
         col_ptr: *const i32,
         row_idx: *const i32,
         values: *const c_double,
-    ) -> *mut EigenBenchContext;
+    ) -> *mut EigenCscSpmv;
 
-    pub fn libeigen_spmv_execute(ctx: *mut EigenBenchContext);
-    pub fn libeigen_spmv_get_y(ctx: *mut EigenBenchContext, out: *mut c_double, len: i32);
-    pub fn libeigen_spmv_teardown(ctx: *mut EigenBenchContext);
+    pub fn libeigen_spmv_execute(ctx: *mut EigenCscSpmv);
+    pub fn libeigen_spmv_get_y(ctx: *mut EigenCscSpmv, out: *mut c_double, len: i32);
+    pub fn libeigen_spmv_teardown(ctx: *mut EigenCscSpmv);
 }
 
 /// Opaque struct representing the C++ side CSR internal context.
 #[repr(C)]
-pub struct EigenCsrBenchContext {
+pub struct EigenCsrSpmv {
     _private: [u8; 0],
 }
 
@@ -39,9 +39,9 @@ unsafe extern "C" {
         row_ptr: *const i32,
         col_idx: *const i32,
         values: *const c_double,
-    ) -> *mut EigenCsrBenchContext;
+    ) -> *mut EigenCsrSpmv;
 
-    pub fn libeigen_csr_spmv_execute(ctx: *mut EigenCsrBenchContext);
-    pub fn libeigen_csr_spmv_get_y(ctx: *mut EigenCsrBenchContext, out: *mut c_double, len: i32);
-    pub fn libeigen_csr_spmv_teardown(ctx: *mut EigenCsrBenchContext);
+    pub fn libeigen_csr_spmv_execute(ctx: *mut EigenCsrSpmv);
+    pub fn libeigen_csr_spmv_get_y(ctx: *mut EigenCsrSpmv, out: *mut c_double, len: i32);
+    pub fn libeigen_csr_spmv_teardown(ctx: *mut EigenCsrSpmv);
 }

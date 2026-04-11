@@ -37,7 +37,7 @@ MKLBenchContext* libmkl_spmv_setup(
     ctx->ncols = ncols;
     ctx->nnz = nnz;
 
-    // We allocate x and y vectors internally since the Rust bench just passes ptrs anyway (or we can just reuse Rust vectors, but this avoids lifetimes)
+    // Vectors are allocated internally with 64-byte alignment for MKL.
     ctx->x = (double*)mkl_malloc(ncols * sizeof(double), 64);
     ctx->y = (double*)mkl_malloc(nrows * sizeof(double), 64);
 

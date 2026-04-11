@@ -6,7 +6,7 @@ use std::os::raw::{c_double, c_int};
 
 /// Opaque struct representing the C-side internal context (Mat, Vecs).
 #[repr(C)]
-pub struct PetscBenchContext {
+pub struct PetscSpmv {
     _private: [u8; 0],
 }
 
@@ -19,9 +19,9 @@ unsafe extern "C" {
         col_idx: *const i32,
         values: *const c_double,
         disable_inode: c_int,
-    ) -> *mut PetscBenchContext;
+    ) -> *mut PetscSpmv;
 
-    pub fn libpetsc_spmv_execute(ctx: *mut PetscBenchContext);
-    pub fn libpetsc_spmv_get_y(ctx: *mut PetscBenchContext, out: *mut c_double, len: i32);
-    pub fn libpetsc_spmv_teardown(ctx: *mut PetscBenchContext);
+    pub fn libpetsc_spmv_execute(ctx: *mut PetscSpmv);
+    pub fn libpetsc_spmv_get_y(ctx: *mut PetscSpmv, out: *mut c_double, len: i32);
+    pub fn libpetsc_spmv_teardown(ctx: *mut PetscSpmv);
 }

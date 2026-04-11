@@ -26,7 +26,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// Discovers Matrix Market `.mtx` files available for benchmarking.
-fn get_matrices() -> Vec<PathBuf> {
+fn matrices() -> Vec<PathBuf> {
     let dir = PathBuf::from("matrices");
     let mut files = Vec::new();
     if let Ok(entries) = fs::read_dir(dir) {
@@ -43,7 +43,7 @@ fn get_matrices() -> Vec<PathBuf> {
 
 /// Per-matrix Criterion benchmark loop.
 fn bench_spmv(c: &mut Criterion) {
-    let matrices = get_matrices();
+    let matrices = matrices();
 
     // y is not reset between iterations — avoids injecting a memcpy.
     // SpMV is memory-bound; y values don't affect cost.
@@ -52,13 +52,6 @@ fn bench_spmv(c: &mut Criterion) {
         let raw = load_mtx_raw(&path).expect("Failed to load matrix");
 
         let mut group = c.benchmark_group(format!("spmv_{}", name));
-
-        // For SpMV (y += A*x): 2*NNZ ops
-        // Bandwidth: (rows+1)*4 + nnz*4 + nnz*8 + cols*8 + rows*16 (read y + write y)
-        // let bytes =
-        //     ((raw.nrows + 1) * 4 + raw.nnz * 4 + raw.nnz * 8 + raw.ncols * 8 + raw.nrows * 16)
-        //         as u64;
-        // group.throughput(Throughput::Bytes(bytes));
 
         // For SpMV (y += A*x), one multiply and one add per non-zero: 2*NNZ FLOPs.
         group.throughput(Throughput::Elements(2 * raw.nnz as u64));

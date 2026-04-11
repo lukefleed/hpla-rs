@@ -6,13 +6,13 @@ use std::os::raw::c_double;
 
 /// Opaque struct representing the C-side CSR benchmark context.
 #[repr(C)]
-pub struct MklBenchContext {
+pub struct MklCsrSpmv {
     _private: [u8; 0],
 }
 
 /// Opaque struct representing the C-side CSC benchmark context.
 #[repr(C)]
-pub struct MklCscBenchContext {
+pub struct MklCscSpmv {
     _private: [u8; 0],
 }
 
@@ -25,11 +25,11 @@ unsafe extern "C" {
         row_ptr: *const i32,
         col_idx: *const i32,
         values: *const c_double,
-    ) -> *mut MklBenchContext;
+    ) -> *mut MklCsrSpmv;
 
-    pub fn libmkl_spmv_execute(ctx: *mut MklBenchContext);
-    pub fn libmkl_spmv_get_y(ctx: *mut MklBenchContext, out: *mut c_double, len: i32);
-    pub fn libmkl_spmv_teardown(ctx: *mut MklBenchContext);
+    pub fn libmkl_spmv_execute(ctx: *mut MklCsrSpmv);
+    pub fn libmkl_spmv_get_y(ctx: *mut MklCsrSpmv, out: *mut c_double, len: i32);
+    pub fn libmkl_spmv_teardown(ctx: *mut MklCsrSpmv);
 
     // CSC Inspection-Execution API
     pub fn libmkl_csc_spmv_setup(
@@ -39,9 +39,9 @@ unsafe extern "C" {
         col_ptr: *const i32,
         row_idx: *const i32,
         values: *const c_double,
-    ) -> *mut MklCscBenchContext;
+    ) -> *mut MklCscSpmv;
 
-    pub fn libmkl_csc_spmv_execute(ctx: *mut MklCscBenchContext);
-    pub fn libmkl_csc_spmv_get_y(ctx: *mut MklCscBenchContext, out: *mut c_double, len: i32);
-    pub fn libmkl_csc_spmv_teardown(ctx: *mut MklCscBenchContext);
+    pub fn libmkl_csc_spmv_execute(ctx: *mut MklCscSpmv);
+    pub fn libmkl_csc_spmv_get_y(ctx: *mut MklCscSpmv, out: *mut c_double, len: i32);
+    pub fn libmkl_csc_spmv_teardown(ctx: *mut MklCscSpmv);
 }

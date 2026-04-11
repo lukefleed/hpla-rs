@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# download_matrices.sh — Download additional SuiteSparse matrices for
-# SpMV benchmarking. Idempotent: skips matrices already in matrices/.
+# download_matrices.sh — Download SuiteSparse matrices used by the
+# benchmark suite. Idempotent: skips matrices already in matrices/.
 #
 # Usage:
 #   bash download_matrices.sh
@@ -15,32 +15,44 @@ BASE_URL="https://suitesparse-collection-website.herokuapp.com/MM"
 mkdir -p "${MATRICES_DIR}"
 mkdir -p "${TEMP_DIR}"
 
-# Complete matrix suite: Group/Name pairs from SuiteSparse Collection.
-# The script is idempotent — matrices already in matrices/ are skipped.
+# SuiteSparse group/name pairs.
+#
+# The first block is used by the SpMV bench: a mix of FEM, circuit,
+# graph, economic, and CFD matrices chosen for sparsity-pattern variety.
+# The second block is the dedicated Lanczos suite: symmetric matrices
+# with zero or small mean diagonal so that exp(-A)v is numerically
+# well-posed for the Saad a posteriori error estimator. See
+# src/lib.rs::LANCZOS_SUITE for the consumed list.
 MATRICES=(
-    "SNAP/amazon0302"            # 262K rows, 1.2M nnz — web graph, pattern, general
-    "Bourchtein/atmosmodd"       # 1.3M rows, 8.8M nnz — atmospheric CFD, general
-    "Williams/cant"              # 62K rows, 4M nnz — cantilever FEM, symmetric
-    "GHS_psdef/inline_1"        # 504K rows, 36.8M nnz — structural FEM, symmetric
-    "Rajat/rajat31"              # 4.7M rows, 20M nnz — circuit simulation, general
-    "Schmid/thermal2"            # 1.2M rows, 8.6M nnz — thermal FEM, symmetric
-    "SNAP/web-Google"            # 916K rows, 5.1M nnz — web graph, pattern, general
-    "GHS_psdef/audikw_1"        # 943K rows, 77M nnz — large FEM, symmetric
-    "Janna/Queen_4147"           # 4.1M rows, 329M nnz — very large, symmetric
-    "DNVS/shipsec1"              # 140K rows, 7.8M nnz — structural, symmetric
-    "Williams/pdb1HYS"           # 36K rows, 4.3M nnz — protein, symmetric
-    "Williams/consph"            # 83K rows, 6M nnz — FEM sphere, symmetric
-    "Williams/mac_econ_fwd500"   # 206K rows, 1.2M nnz — economic, general
-    "Freescale/circuit5M"        # 5.6M rows, 59M nnz — very large circuit, general
-    "SNAP/roadNet-CA"            # 1.9M rows, 5.5M nnz — road network, symmetric
+    # SpMV suite
+    "SNAP/amazon0302"
+    "Bourchtein/atmosmodd"
+    "Williams/cant"
+    "GHS_psdef/inline_1"
+    "Rajat/rajat31"
+    "Schmid/thermal2"
+    "SNAP/web-Google"
+    "GHS_psdef/audikw_1"
+    "Janna/Queen_4147"
+    "DNVS/shipsec1"
+    "Williams/pdb1HYS"
+    "Williams/consph"
+    "Williams/mac_econ_fwd500"
+    "Freescale/circuit5M"
+    "SNAP/roadNet-CA"
+    # Lanczos suite (zero or small mean diagonal, suitable for exp(-A)v)
+    "DIMACS10/kron_g500-logn18"
+    "DIMACS10/coPapersDBLP"
+    "SNAP/as-Skitter"
+    "DIMACS10/delaunay_n22"
 )
 
 for entry in "${MATRICES[@]}"; do
-    name="${entry##*/}"  # Extract name after /
+    name="${entry##*/}"
     mtx_file="${MATRICES_DIR}/${name}.mtx"
 
     if [[ -f "${mtx_file}" ]]; then
-        echo "[skip] ${name}.mtx already exists"
+        echo "[skip] ${name}.mtx already present"
         continue
     fi
 
@@ -50,15 +62,12 @@ for entry in "${MATRICES[@]}"; do
     echo "[extract] ${name}.tar.gz"
     tar -xzf "${TEMP_DIR}/${name}.tar.gz" -C "${TEMP_DIR}"
 
-    # Move the .mtx file to matrices/
     mv "${TEMP_DIR}/${name}/${name}.mtx" "${mtx_file}"
-
-    echo "[done] ${mtx_file}"
+    echo "[ok]   ${mtx_file}"
 done
 
-# Cleanup
 rm -rf "${TEMP_DIR}"
 
 echo ""
-echo "Matrix suite now contains:"
+echo "Matrix suite:"
 ls -lhS "${MATRICES_DIR}"/*.mtx | awk '{print $5, $NF}'
