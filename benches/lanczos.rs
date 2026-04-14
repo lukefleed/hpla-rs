@@ -17,7 +17,11 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 use faer::Par;
 use faer::dyn_stack::{MemBuffer, MemStack};
 use faer::matrix_free::LinOp;
-use faer::sparse::SparseColMat;
+use faer::sparse::{SparseColMat, SparseRowMat};
+use hpla_rs::eigen::{
+    libeigen_csc_lanczos_execute, libeigen_csc_lanczos_setup, libeigen_csc_lanczos_teardown,
+    libeigen_lanczos_execute, libeigen_lanczos_setup, libeigen_lanczos_teardown,
+};
 use hpla_rs::lanczos::{
     LanczosWorkspace, Reorthogonalization, estimate_spectral_radius, exp_neg_tk, lanczos_into,
 };
@@ -26,7 +30,7 @@ use hpla_rs::psblas::{
 };
 use hpla_rs::{load_mtx_raw, scale_values};
 
-use common::{probe_krylov_dim, lanczos_matrices};
+use common::{lanczos_matrices, probe_krylov_dim};
 use hpla_rs::lanczos::deterministic_rhs;
 
 fn bench_lanczos(c: &mut Criterion) {
@@ -110,7 +114,7 @@ fn bench_lanczos(c: &mut Criterion) {
         // the PSBLAS `_setup`/`_execute` contract.
         let mut ws = LanczosWorkspace::new(raw.nrows, krylov_dim);
         let mut mem = MemBuffer::new(scratch_req);
-        group.bench_with_input(BenchmarkId::new("faer", "one_pass"), &(), |bench, _| {
+        group.bench_with_input(BenchmarkId::new("faer_csc", "one_pass"), &(), |bench, _| {
             bench.iter(|| {
                 let stack = MemStack::new(&mut mem);
                 let result = lanczos_into(
@@ -126,6 +130,93 @@ fn bench_lanczos(c: &mut Criterion) {
                 let _ = criterion::black_box(result);
             });
         });
+
+        // --------------------------------------------------------
+        // faer CSR (one-pass Lanczos, cross-format control)
+        // --------------------------------------------------------
+        let a_faer_csr =
+            SparseRowMat::try_new_from_triplets(raw.nrows, raw.ncols, &raw.triplets).unwrap();
+        let scratch_req_csr = a_faer_csr.as_ref().apply_scratch(1, Par::Seq);
+        let mut ws_csr = LanczosWorkspace::new(raw.nrows, krylov_dim);
+        let mut mem_csr = MemBuffer::new(scratch_req_csr);
+        group.bench_with_input(BenchmarkId::new("faer_csr", "one_pass"), &(), |bench, _| {
+            bench.iter(|| {
+                let stack = MemStack::new(&mut mem_csr);
+                let result = lanczos_into(
+                    &mut ws_csr,
+                    &a_faer_csr.as_ref(),
+                    b_mat.as_ref(),
+                    krylov_dim,
+                    Par::Seq,
+                    Reorthogonalization::None,
+                    stack,
+                    exp_neg_tk,
+                );
+                let _ = criterion::black_box(result);
+            });
+        });
+
+        // --------------------------------------------------------
+        // Eigen CSR (one-pass Lanczos)
+        // --------------------------------------------------------
+        unsafe {
+            let ctx = libeigen_lanczos_setup(
+                raw.nrows as i32,
+                raw.ncols as i32,
+                raw.nnz as i32,
+                raw.row_ptr.as_ptr(),
+                raw.col_idx.as_ptr(),
+                raw.values.as_ptr(),
+                b_vec.as_ptr(),
+                krylov_dim as i32,
+            );
+
+            if !ctx.is_null() {
+                group.bench_with_input(
+                    BenchmarkId::new("eigen_csr", "one_pass"),
+                    &(),
+                    |bench, _| {
+                        bench.iter(|| {
+                            libeigen_lanczos_execute(ctx);
+                            criterion::black_box(ctx);
+                        });
+                    },
+                );
+
+                libeigen_lanczos_teardown(ctx);
+            }
+        }
+
+        // --------------------------------------------------------
+        // Eigen CSC (one-pass Lanczos, cross-format control)
+        // --------------------------------------------------------
+        unsafe {
+            let ctx = libeigen_csc_lanczos_setup(
+                raw.nrows as i32,
+                raw.ncols as i32,
+                raw.nnz as i32,
+                raw.col_ptr.as_ptr(),
+                raw.row_idx.as_ptr(),
+                raw.csc_values.as_ptr(),
+                b_vec.as_ptr(),
+                krylov_dim as i32,
+            );
+
+            if !ctx.is_null() {
+                group.bench_with_input(
+                    BenchmarkId::new("eigen_csc", "one_pass"),
+                    &(),
+                    |bench, _| {
+                        bench.iter(|| {
+                            libeigen_csc_lanczos_execute(ctx);
+                            criterion::black_box(ctx);
+                        });
+                    },
+                );
+
+                libeigen_csc_lanczos_teardown(ctx);
+            }
+        }
 
         // --------------------------------------------------------
         // PSBLAS (one-pass Lanczos for exp(-A)b)
@@ -161,9 +252,9 @@ fn bench_lanczos(c: &mut Criterion) {
 criterion_group!(
     name = benches;
     config = Criterion::default()
-        .sample_size(50)
+        .sample_size(10)
         .warm_up_time(std::time::Duration::from_secs(3))
-        .measurement_time(std::time::Duration::from_secs(30));
+        .measurement_time(std::time::Duration::from_secs(10));
     targets = bench_lanczos
 );
 criterion_main!(benches);

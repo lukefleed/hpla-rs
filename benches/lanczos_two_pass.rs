@@ -9,20 +9,26 @@
 mod common;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use faer::Par;
 use faer::dyn_stack::{MemBuffer, MemStack};
 use faer::matrix_free::LinOp;
-use faer::sparse::SparseColMat;
-use faer::Par;
+use faer::sparse::{SparseColMat, SparseRowMat};
+use hpla_rs::eigen::{
+    libeigen_csc_lanczos_two_pass_execute, libeigen_csc_lanczos_two_pass_setup,
+    libeigen_csc_lanczos_two_pass_teardown, libeigen_lanczos_two_pass_execute,
+    libeigen_lanczos_two_pass_setup, libeigen_lanczos_two_pass_teardown,
+};
 use hpla_rs::lanczos::{
     TwoPassWorkspace, estimate_spectral_radius, exp_neg_tk, lanczos_two_pass_into,
 };
 use hpla_rs::{load_mtx_raw, scale_values};
-use hpla_rs::psblas::{
-    libpsblas_lanczos_two_pass_execute, libpsblas_lanczos_two_pass_setup,
-    libpsblas_lanczos_two_pass_teardown,
-};
+// Temporarily disabled while ffi/lanczos/psblas_lanczos_two_pass.f90 is WIP.
+// use hpla_rs::psblas::{
+//     libpsblas_lanczos_two_pass_execute, libpsblas_lanczos_two_pass_setup,
+//     libpsblas_lanczos_two_pass_teardown,
+// };
 
-use common::{probe_krylov_dim, lanczos_matrices};
+use common::{lanczos_matrices, probe_krylov_dim};
 use hpla_rs::lanczos::deterministic_rhs;
 
 fn bench_lanczos_two_pass(c: &mut Criterion) {
@@ -36,8 +42,7 @@ fn bench_lanczos_two_pass(c: &mut Criterion) {
         let b_vec = deterministic_rhs(raw.nrows);
         let scale = {
             let a_tmp =
-                SparseColMat::try_new_from_triplets(raw.nrows, raw.ncols, &raw.triplets)
-                    .unwrap();
+                SparseColMat::try_new_from_triplets(raw.nrows, raw.ncols, &raw.triplets).unwrap();
             let b_tmp = faer::Mat::from_fn(raw.nrows, 1, |i, _| b_vec[i]);
             let scratch_req = a_tmp.as_ref().apply_scratch(1, Par::Seq);
             let mut mem = MemBuffer::new(scratch_req);
@@ -113,7 +118,7 @@ fn bench_lanczos_two_pass(c: &mut Criterion) {
         // contract.
         let mut ws = TwoPassWorkspace::new(raw.nrows, krylov_dim);
         let mut mem = MemBuffer::new(scratch_req);
-        group.bench_with_input(BenchmarkId::new("faer", "two_pass"), &(), |bench, _| {
+        group.bench_with_input(BenchmarkId::new("faer_csc", "two_pass"), &(), |bench, _| {
             bench.iter(|| {
                 let stack = MemStack::new(&mut mem);
                 let result = lanczos_two_pass_into(
@@ -130,10 +135,34 @@ fn bench_lanczos_two_pass(c: &mut Criterion) {
         });
 
         // --------------------------------------------------------
-        // PSBLAS (two-pass Lanczos)
+        // faer CSR (two-pass Lanczos, cross-format control)
+        // --------------------------------------------------------
+        let a_faer_csr =
+            SparseRowMat::try_new_from_triplets(raw.nrows, raw.ncols, &raw.triplets).unwrap();
+        let scratch_req_csr = a_faer_csr.as_ref().apply_scratch(1, Par::Seq);
+        let mut ws_csr = TwoPassWorkspace::new(raw.nrows, krylov_dim);
+        let mut mem_csr = MemBuffer::new(scratch_req_csr);
+        group.bench_with_input(BenchmarkId::new("faer_csr", "two_pass"), &(), |bench, _| {
+            bench.iter(|| {
+                let stack = MemStack::new(&mut mem_csr);
+                let result = lanczos_two_pass_into(
+                    &mut ws_csr,
+                    &a_faer_csr.as_ref(),
+                    b_mat.as_ref(),
+                    krylov_dim,
+                    Par::Seq,
+                    stack,
+                    exp_neg_tk,
+                );
+                let _ = criterion::black_box(result);
+            });
+        });
+
+        // --------------------------------------------------------
+        // Eigen CSR (two-pass Lanczos)
         // --------------------------------------------------------
         unsafe {
-            let ctx = libpsblas_lanczos_two_pass_setup(
+            let ctx = libeigen_lanczos_two_pass_setup(
                 raw.nrows as i32,
                 raw.ncols as i32,
                 raw.nnz as i32,
@@ -146,19 +175,78 @@ fn bench_lanczos_two_pass(c: &mut Criterion) {
 
             if !ctx.is_null() {
                 group.bench_with_input(
-                    BenchmarkId::new("psblas", "two_pass"),
+                    BenchmarkId::new("eigen_csr", "two_pass"),
                     &(),
                     |bench, _| {
                         bench.iter(|| {
-                            libpsblas_lanczos_two_pass_execute(ctx);
+                            libeigen_lanczos_two_pass_execute(ctx);
                             criterion::black_box(ctx);
                         });
                     },
                 );
 
-                libpsblas_lanczos_two_pass_teardown(ctx);
+                libeigen_lanczos_two_pass_teardown(ctx);
             }
         }
+
+        // --------------------------------------------------------
+        // Eigen CSC (two-pass Lanczos, cross-format control)
+        // --------------------------------------------------------
+        unsafe {
+            let ctx = libeigen_csc_lanczos_two_pass_setup(
+                raw.nrows as i32,
+                raw.ncols as i32,
+                raw.nnz as i32,
+                raw.col_ptr.as_ptr(),
+                raw.row_idx.as_ptr(),
+                raw.csc_values.as_ptr(),
+                b_vec.as_ptr(),
+                krylov_dim as i32,
+            );
+
+            if !ctx.is_null() {
+                group.bench_with_input(
+                    BenchmarkId::new("eigen_csc", "two_pass"),
+                    &(),
+                    |bench, _| {
+                        bench.iter(|| {
+                            libeigen_csc_lanczos_two_pass_execute(ctx);
+                            criterion::black_box(ctx);
+                        });
+                    },
+                );
+
+                libeigen_csc_lanczos_two_pass_teardown(ctx);
+            }
+        }
+
+        // --------------------------------------------------------
+        // PSBLAS (two-pass Lanczos)
+        // --------------------------------------------------------
+        // Temporarily disabled while ffi/lanczos/psblas_lanczos_two_pass.f90 is WIP.
+        // unsafe {
+        //     let ctx = libpsblas_lanczos_two_pass_setup(
+        //         raw.nrows as i32,
+        //         raw.ncols as i32,
+        //         raw.nnz as i32,
+        //         raw.row_ptr.as_ptr(),
+        //         raw.col_idx.as_ptr(),
+        //         raw.values.as_ptr(),
+        //         b_vec.as_ptr(),
+        //         krylov_dim as i32,
+        //     );
+        //
+        //     if !ctx.is_null() {
+        //         group.bench_with_input(BenchmarkId::new("psblas", "two_pass"), &(), |bench, _| {
+        //             bench.iter(|| {
+        //                 libpsblas_lanczos_two_pass_execute(ctx);
+        //                 criterion::black_box(ctx);
+        //             });
+        //         });
+        //
+        //         libpsblas_lanczos_two_pass_teardown(ctx);
+        //     }
+        // }
 
         group.finish();
     }
@@ -167,9 +255,9 @@ fn bench_lanczos_two_pass(c: &mut Criterion) {
 criterion_group!(
     name = benches;
     config = Criterion::default()
-        .sample_size(50)
+        .sample_size(10)
         .warm_up_time(std::time::Duration::from_secs(3))
-        .measurement_time(std::time::Duration::from_secs(30));
+        .measurement_time(std::time::Duration::from_secs(10));
     targets = bench_lanczos_two_pass
 );
 criterion_main!(benches);

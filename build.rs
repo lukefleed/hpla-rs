@@ -61,7 +61,7 @@ fn main() {
     cc::Build::new()
         .cpp(true)
         .file("ffi/spmv/eigen.cpp")
-        .include(eigen_include)
+        .include(&eigen_include)
         .compiler("clang++")
         .flag("-O3")
         .flag("-march=native")
@@ -70,6 +70,34 @@ fn main() {
         .flag("-w") // Suppress all internal Eigen C++ warnings
         .flag("-flto")
         .compile("eigen_wrapper");
+
+    cc::Build::new()
+        .cpp(true)
+        .std("c++20")
+        .file("ffi/lanczos/eigen_lanczos_two_pass.cpp")
+        .include(&eigen_include)
+        .compiler("clang++")
+        .flag("-O3")
+        .flag("-march=native")
+        .flag("-mtune=native")
+        .flag("-ffast-math")
+        .flag("-w") // Suppress all internal Eigen C++ warnings
+        .flag("-flto")
+        .compile("eigen_lanczos_two_pass_wrapper");
+
+    cc::Build::new()
+        .cpp(true)
+        .std("c++20")
+        .file("ffi/lanczos/eigen_lanczos.cpp")
+        .include(&eigen_include)
+        .compiler("clang++")
+        .flag("-O3")
+        .flag("-march=native")
+        .flag("-mtune=native")
+        .flag("-ffast-math")
+        .flag("-w")
+        .flag("-flto")
+        .compile("eigen_lanczos_wrapper");
 
     // ----------------------------------------------------
     // C Intel MKL compilation
@@ -186,18 +214,19 @@ fn main() {
         .compile("psblas_lanczos_wrapper");
 
     // Two-pass Lanczos wrapper for f(A)b = exp(-A)b.
-    cc::Build::new()
-        .file("ffi/lanczos/psblas_lanczos_two_pass.f90")
-        .include(&psblas_modules)
-        .compiler("gfortran")
-        .flag("-O3")
-        .flag("-march=native")
-        .flag("-mtune=native")
-        .flag("-ffast-math")
-        .flag("-ffat-lto-objects")
-        .flag(&fortran_mod_flag)
-        .flag("-Wno-unused-dummy-argument") // stub has no-op functions; remove when implemented
-        .compile("psblas_lanczos_two_pass_wrapper");
+    // Temporarily disabled while ffi/lanczos/psblas_lanczos_two_pass.f90 is WIP.
+    // cc::Build::new()
+    //     .file("ffi/lanczos/psblas_lanczos_two_pass.f90")
+    //     .include(&psblas_modules)
+    //     .compiler("gfortran")
+    //     .flag("-O3")
+    //     .flag("-march=native")
+    //     .flag("-mtune=native")
+    //     .flag("-ffast-math")
+    //     .flag("-ffat-lto-objects")
+    //     .flag(&fortran_mod_flag)
+    //     .flag("-Wno-unused-dummy-argument") // stub has no-op functions; remove when implemented
+    //     .compile("psblas_lanczos_two_pass_wrapper");
 
     // Use link-arg instead of link-lib: rustc discards static archives when no
     // Rust FFI symbol references them directly, breaking our C++ wrapper deps.
@@ -223,6 +252,8 @@ fn main() {
     // Recompilation triggers: wrapper source files
     println!("cargo::rerun-if-changed=ffi/spmv/petsc.c");
     println!("cargo::rerun-if-changed=ffi/spmv/eigen.cpp");
+    println!("cargo::rerun-if-changed=ffi/lanczos/eigen_lanczos.cpp");
+    println!("cargo::rerun-if-changed=ffi/lanczos/eigen_lanczos_two_pass.cpp");
     println!("cargo::rerun-if-changed=ffi/spmv/mkl.c");
     println!("cargo::rerun-if-changed=ffi/spmv/psblas.cpp");
     println!("cargo::rerun-if-changed=ffi/lanczos/psblas_lanczos.f90");

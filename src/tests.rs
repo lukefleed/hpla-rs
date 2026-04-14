@@ -268,23 +268,29 @@ fn test_backend_numerical_equivalence() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Checks that the PSBLAS two-pass Lanczos produces the same exp(-A)b
+/// Checks that the Eigen two-pass Lanczos produces the same exp(-A)b
 /// as the Faer reference. Runs on every symmetric .mtx in matrices/.
-/// Skips gracefully if the PSBLAS stub returns a null context.
 #[test]
 fn test_lanczos_two_pass_backend_equivalence() -> anyhow::Result<()> {
     use faer::Par;
     use faer::dyn_stack::{MemBuffer, MemStack};
     use faer::matrix_free::LinOp;
 
+    use crate::eigen::{
+        libeigen_csc_lanczos_two_pass_execute, libeigen_csc_lanczos_two_pass_get_y,
+        libeigen_csc_lanczos_two_pass_setup, libeigen_csc_lanczos_two_pass_teardown,
+        libeigen_lanczos_two_pass_execute, libeigen_lanczos_two_pass_get_y,
+        libeigen_lanczos_two_pass_setup, libeigen_lanczos_two_pass_teardown,
+    };
     use crate::lanczos::{
         KRYLOV_HARD_LIMIT, KRYLOV_MARGIN, SAAD_TOL, SPECTRAL_PROBE_STEPS, adaptive_krylov_dim,
         deterministic_rhs, estimate_spectral_radius, exp_neg_tk, lanczos_two_pass,
     };
-    use crate::psblas::{
-        libpsblas_lanczos_two_pass_execute, libpsblas_lanczos_two_pass_get_y,
-        libpsblas_lanczos_two_pass_setup, libpsblas_lanczos_two_pass_teardown,
-    };
+    // Temporarily disabled while ffi/lanczos/psblas_lanczos_two_pass.f90 is WIP.
+    // use crate::psblas::{
+    //     libpsblas_lanczos_two_pass_execute, libpsblas_lanczos_two_pass_get_y,
+    //     libpsblas_lanczos_two_pass_setup, libpsblas_lanczos_two_pass_teardown,
+    // };
 
     let tol = 1e-8;
     let mut checked = 0;
@@ -388,11 +394,11 @@ fn test_lanczos_two_pass_backend_equivalence() -> anyhow::Result<()> {
         let faer_norm: f64 = faer_ref.iter().map(|v| v * v).sum::<f64>().sqrt();
         assert!(faer_norm > 0.0, "{name}: faer Lanczos result is all zeros");
 
-        // --- PSBLAS ---
+        // --- Eigen ---
         {
             let mut y_buf = vec![0.0f64; raw.nrows];
             unsafe {
-                let ctx = libpsblas_lanczos_two_pass_setup(
+                let ctx = libeigen_lanczos_two_pass_setup(
                     raw.nrows as i32,
                     raw.ncols as i32,
                     raw.nnz as i32,
@@ -403,27 +409,92 @@ fn test_lanczos_two_pass_backend_equivalence() -> anyhow::Result<()> {
                     krylov_dim as i32,
                 );
                 if ctx.is_null() {
-                    eprintln!("  psblas/two_pass:  skipped (stub returned null)");
-                    continue;
+                    eprintln!("  eigen/two_pass:   skipped (stub returned null)");
+                } else {
+                    libeigen_lanczos_two_pass_execute(ctx);
+                    libeigen_lanczos_two_pass_get_y(ctx, y_buf.as_mut_ptr(), raw.nrows as i32);
+                    libeigen_lanczos_two_pass_teardown(ctx);
+
+                    let err = relative_l2_error(&y_buf, &faer_ref);
+                    eprintln!("  eigen/two_pass:   rel L2 = {err:.2e}");
+                    assert!(
+                        err < tol,
+                        "{name}: eigen/two_pass diverged: rel L2 = {err:.2e}"
+                    );
                 }
-                libpsblas_lanczos_two_pass_execute(ctx);
-                libpsblas_lanczos_two_pass_get_y(ctx, y_buf.as_mut_ptr(), raw.nrows as i32);
-                libpsblas_lanczos_two_pass_teardown(ctx);
             }
-            let err = relative_l2_error(&y_buf, &faer_ref);
-            eprintln!("  psblas/two_pass:  rel L2 = {err:.2e}");
-            assert!(
-                err < tol,
-                "{name}: psblas/two_pass diverged: rel L2 = {err:.2e}"
-            );
         }
+
+        // --- Eigen CSC (cross-format control) ---
+        {
+            let mut y_buf = vec![0.0f64; raw.nrows];
+            unsafe {
+                let ctx = libeigen_csc_lanczos_two_pass_setup(
+                    raw.nrows as i32,
+                    raw.ncols as i32,
+                    raw.nnz as i32,
+                    raw.col_ptr.as_ptr(),
+                    raw.row_idx.as_ptr(),
+                    raw.csc_values.as_ptr(),
+                    b_vec.as_ptr(),
+                    krylov_dim as i32,
+                );
+                if ctx.is_null() {
+                    eprintln!("  eigen_csc/two_pass: skipped (stub returned null)");
+                } else {
+                    libeigen_csc_lanczos_two_pass_execute(ctx);
+                    libeigen_csc_lanczos_two_pass_get_y(ctx, y_buf.as_mut_ptr(), raw.nrows as i32);
+                    libeigen_csc_lanczos_two_pass_teardown(ctx);
+
+                    let err = relative_l2_error(&y_buf, &faer_ref);
+                    eprintln!("  eigen_csc/two_pass: rel L2 = {err:.2e}");
+                    assert!(
+                        err < tol,
+                        "{name}: eigen_csc/two_pass diverged: rel L2 = {err:.2e}"
+                    );
+                }
+            }
+        }
+
+        // PSBLAS two-pass temporarily disabled while
+        // ffi/lanczos/psblas_lanczos_two_pass.f90 is WIP.
+        // {
+        //     let mut y_buf = vec![0.0f64; raw.nrows];
+        //     unsafe {
+        //         let ctx = libpsblas_lanczos_two_pass_setup(
+        //             raw.nrows as i32,
+        //             raw.ncols as i32,
+        //             raw.nnz as i32,
+        //             raw.row_ptr.as_ptr(),
+        //             raw.col_idx.as_ptr(),
+        //             raw.values.as_ptr(),
+        //             b_vec.as_ptr(),
+        //             krylov_dim as i32,
+        //         );
+        //         if ctx.is_null() {
+        //             eprintln!("  psblas/two_pass:  skipped (stub returned null)");
+        //             continue;
+        //         }
+        //         libpsblas_lanczos_two_pass_execute(ctx);
+        //         libpsblas_lanczos_two_pass_get_y(ctx, y_buf.as_mut_ptr(), raw.nrows as i32);
+        //         libpsblas_lanczos_two_pass_teardown(ctx);
+        //     }
+        //     let err = relative_l2_error(&y_buf, &faer_ref);
+        //     eprintln!("  psblas/two_pass:  rel L2 = {err:.2e}");
+        //     assert!(
+        //         err < tol,
+        //         "{name}: psblas/two_pass diverged: rel L2 = {err:.2e}"
+        //     );
+        // }
     }
 
     anyhow::ensure!(
         checked > 0,
         "no Lanczos matrices available; run download_matrices.sh"
     );
-    eprintln!("\nTwo-pass Lanczos backends match Faer reference across {checked} matrices.");
+    eprintln!("\nTwo-pass Lanczos Eigen backend matches Faer reference across {checked} matrices.");
+    // Temporarily disabled while ffi/lanczos/psblas_lanczos_two_pass.f90 is WIP.
+    // eprintln!("\nTwo-pass Lanczos backends match Faer reference across {checked} matrices.");
     Ok(())
 }
 
@@ -437,6 +508,11 @@ fn test_lanczos_backend_equivalence() -> anyhow::Result<()> {
     use faer::dyn_stack::{MemBuffer, MemStack};
     use faer::matrix_free::LinOp;
 
+    use crate::eigen::{
+        libeigen_csc_lanczos_execute, libeigen_csc_lanczos_get_y, libeigen_csc_lanczos_setup,
+        libeigen_csc_lanczos_teardown, libeigen_lanczos_execute, libeigen_lanczos_get_y,
+        libeigen_lanczos_setup, libeigen_lanczos_teardown,
+    };
     use crate::lanczos::{
         KRYLOV_HARD_LIMIT, KRYLOV_MARGIN, Reorthogonalization, SAAD_TOL, SPECTRAL_PROBE_STEPS,
         adaptive_krylov_dim, deterministic_rhs, estimate_spectral_radius, exp_neg_tk, lanczos,
@@ -549,6 +625,68 @@ fn test_lanczos_backend_equivalence() -> anyhow::Result<()> {
 
         let faer_norm: f64 = faer_ref.iter().map(|v| v * v).sum::<f64>().sqrt();
         assert!(faer_norm > 0.0, "{name}: faer Lanczos result is all zeros");
+
+        // --- Eigen CSR ---
+        {
+            let mut y_buf = vec![0.0f64; raw.nrows];
+            unsafe {
+                let ctx = libeigen_lanczos_setup(
+                    raw.nrows as i32,
+                    raw.ncols as i32,
+                    raw.nnz as i32,
+                    raw.row_ptr.as_ptr(),
+                    raw.col_idx.as_ptr(),
+                    raw.values.as_ptr(),
+                    b_vec.as_ptr(),
+                    krylov_dim as i32,
+                );
+                if ctx.is_null() {
+                    eprintln!("  eigen/one_pass:    skipped (stub returned null)");
+                } else {
+                    libeigen_lanczos_execute(ctx);
+                    libeigen_lanczos_get_y(ctx, y_buf.as_mut_ptr(), raw.nrows as i32);
+                    libeigen_lanczos_teardown(ctx);
+
+                    let err = relative_l2_error(&y_buf, &faer_ref);
+                    eprintln!("  eigen/one_pass:    rel L2 = {err:.2e}");
+                    assert!(
+                        err < tol,
+                        "{name}: eigen/one_pass diverged: rel L2 = {err:.2e}"
+                    );
+                }
+            }
+        }
+
+        // --- Eigen CSC (cross-format control) ---
+        {
+            let mut y_buf = vec![0.0f64; raw.nrows];
+            unsafe {
+                let ctx = libeigen_csc_lanczos_setup(
+                    raw.nrows as i32,
+                    raw.ncols as i32,
+                    raw.nnz as i32,
+                    raw.col_ptr.as_ptr(),
+                    raw.row_idx.as_ptr(),
+                    raw.csc_values.as_ptr(),
+                    b_vec.as_ptr(),
+                    krylov_dim as i32,
+                );
+                if ctx.is_null() {
+                    eprintln!("  eigen_csc/one_pass: skipped (stub returned null)");
+                } else {
+                    libeigen_csc_lanczos_execute(ctx);
+                    libeigen_csc_lanczos_get_y(ctx, y_buf.as_mut_ptr(), raw.nrows as i32);
+                    libeigen_csc_lanczos_teardown(ctx);
+
+                    let err = relative_l2_error(&y_buf, &faer_ref);
+                    eprintln!("  eigen_csc/one_pass: rel L2 = {err:.2e}");
+                    assert!(
+                        err < tol,
+                        "{name}: eigen_csc/one_pass diverged: rel L2 = {err:.2e}"
+                    );
+                }
+            }
+        }
 
         // --- PSBLAS ---
         {

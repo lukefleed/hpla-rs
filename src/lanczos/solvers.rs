@@ -16,9 +16,8 @@ use crate::lanczos::{
     error::{LanczosError, LanczosErrorKind},
 };
 use faer::{
-    Accum, Par,
+    Par,
     dyn_stack::MemStack,
-    linalg::matmul::matmul,
     matrix_free::LinOp,
     prelude::*,
 };
@@ -287,18 +286,20 @@ where
         .into());
     }
 
-    // x_k = V_k * g * ||b||, written in place over the workspace output.
-    // `b_norm` was cached by `lanczos_one_pass_into` before the recurrence.
+    // x_k = ||b|| * V_k * g, column-by-column accumulation.
+    // Uses zip! instead of the convenience matmul, which internally
+    // allocates O(n*k) packing buffers via the global allocator and
+    // would violate the zero-n-allocation hot-path policy.
     let b_norm = ws.b_norm();
     let v_k_slice = ws.v_k.as_ref().get(.., 0..steps_taken);
-    matmul(
-        ws.x_k.as_mut(),
-        Accum::Replace,
-        v_k_slice,
-        g.as_ref(),
-        b_norm,
-        par,
-    );
+    zip!(ws.x_k.as_mut()).for_each(|unzip!(x_i)| *x_i = 0.0);
+    for j in 0..steps_taken {
+        let coeff = b_norm * g[(j, 0)];
+        let v_col = v_k_slice.subcols(j, 1);
+        zip!(ws.x_k.as_mut(), v_col).for_each(|unzip!(x_i, v_ij)| {
+            *x_i += coeff * *v_ij;
+        });
+    }
 
     Ok(())
 }
