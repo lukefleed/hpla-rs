@@ -8,8 +8,6 @@ python/hw_config.json
 CLAUDE.md
 docs/
 python/__pycache__/
-python/spmv/
-python/lanczos_two_pass/
 .spack-env
 TeX
 *.mod
