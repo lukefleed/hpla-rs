@@ -252,9 +252,9 @@ fn bench_lanczos(c: &mut Criterion) {
 criterion_group!(
     name = benches;
     config = Criterion::default()
-        .sample_size(10)
+        .sample_size(50)
         .warm_up_time(std::time::Duration::from_secs(3))
-        .measurement_time(std::time::Duration::from_secs(10));
+        .measurement_time(std::time::Duration::from_secs(60));
     targets = bench_lanczos
 );
 criterion_main!(benches);

@@ -16,10 +16,10 @@ The two Lanczos variants compute the same result. The difference is memory vs co
 
 | Backend | Library | Format | Language |
 |---------|---------|--------|----------|
-| `faer/csc` | faer 0.24 | CSC | Rust |
-| `faer/csr` | faer 0.24 | CSR | Rust |
-| `petsc/csr_inodes` | PETSc 3.24 | CSR + Inode | C |
-| `petsc/csr_raw` | PETSc 3.24 | CSR scalar | C |
+| `faer/csc` | faer | CSC | Rust |
+| `faer/csr` | faer | CSR | Rust |
+| `petsc/csr_inodes` | PETSc | CSR + Inode | C |
+| `petsc/csr_raw` | PETSc | CSR scalar | C |
 | `eigen/csc_map` | Eigen | CSC | C++ |
 | `eigen/csr_map` | Eigen | CSR | C++ |
 | `mkl/csr_ie` | Intel MKL | CSR IE | C |
@@ -31,12 +31,12 @@ Both benches share the same matrix suite and Krylov dimension (determined adapti
 
 | Backend | Kernel | Library | Format | Language |
 |---------|--------|---------|--------|----------|
-| `faer_csc` | one-pass, two-pass | faer 0.24 | CSC | Rust |
-| `faer_csr` | one-pass, two-pass | faer 0.24 | CSR | Rust |
+| `faer_csc` | one-pass, two-pass | faer | CSC | Rust |
+| `faer_csr` | one-pass, two-pass | faer | CSR | Rust |
 | `eigen_csr` | one-pass, two-pass | Eigen | CSR | C++ |
 | `eigen_csc` | one-pass, two-pass | Eigen | CSC | C++ |
 
-Each library is tested in both CSR and CSC to separate format effects from library quality (2x2 factorial design).
+Each library is tested in both CSR and CSC
 
 ### Matrix suite
 
