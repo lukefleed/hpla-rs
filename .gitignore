@@ -12,3 +12,4 @@ python/__pycache__/
 TeX
 *.mod
 .cargo/config.toml
+.venv

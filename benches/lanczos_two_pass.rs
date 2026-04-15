@@ -21,6 +21,10 @@ use hpla_rs::eigen::{
 use hpla_rs::lanczos::{
     TwoPassWorkspace, estimate_spectral_radius, exp_neg_tk, lanczos_two_pass_into,
 };
+use hpla_rs::petsc::{
+    libpetsc_lanczos_two_pass_execute, libpetsc_lanczos_two_pass_setup,
+    libpetsc_lanczos_two_pass_teardown,
+};
 use hpla_rs::{load_mtx_raw, scale_values};
 // Temporarily disabled while ffi/lanczos/psblas_lanczos_two_pass.f90 is WIP.
 // use hpla_rs::psblas::{
@@ -221,6 +225,37 @@ fn bench_lanczos_two_pass(c: &mut Criterion) {
         }
 
         // --------------------------------------------------------
+        // PETSc CSR (two-pass Lanczos for exp(-A)b)
+        // --------------------------------------------------------
+        unsafe {
+            let ctx = libpetsc_lanczos_two_pass_setup(
+                raw.nrows as i32,
+                raw.ncols as i32,
+                raw.nnz as i32,
+                raw.row_ptr.as_ptr(),
+                raw.col_idx.as_ptr(),
+                raw.values.as_ptr(),
+                b_vec.as_ptr(),
+                krylov_dim as i32,
+            );
+
+            if !ctx.is_null() {
+                group.bench_with_input(
+                    BenchmarkId::new("petsc_csr", "two_pass"),
+                    &(),
+                    |bench, _| {
+                        bench.iter(|| {
+                            libpetsc_lanczos_two_pass_execute(ctx);
+                            criterion::black_box(ctx);
+                        });
+                    },
+                );
+
+                libpetsc_lanczos_two_pass_teardown(ctx);
+            }
+        }
+
+        // --------------------------------------------------------
         // PSBLAS (two-pass Lanczos)
         // --------------------------------------------------------
         // Temporarily disabled while ffi/lanczos/psblas_lanczos_two_pass.f90 is WIP.
@@ -255,9 +290,9 @@ fn bench_lanczos_two_pass(c: &mut Criterion) {
 criterion_group!(
     name = benches;
     config = Criterion::default()
-        .sample_size(50)
+        .sample_size(10)
         .warm_up_time(std::time::Duration::from_secs(3))
-        .measurement_time(std::time::Duration::from_secs(60));
+        .measurement_time(std::time::Duration::from_secs(10));
     targets = bench_lanczos_two_pass
 );
 criterion_main!(benches);

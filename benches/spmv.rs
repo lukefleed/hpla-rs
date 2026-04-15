@@ -18,8 +18,7 @@ use hpla_rs::mkl::{
 };
 use hpla_rs::petsc::{libpetsc_spmv_execute, libpetsc_spmv_setup, libpetsc_spmv_teardown};
 use hpla_rs::psblas::{
-    libpsblas_csc_spmv_setup, libpsblas_spmv_execute, libpsblas_spmv_setup,
-    libpsblas_spmv_teardown,
+    libpsblas_csc_spmv_setup, libpsblas_spmv_execute, libpsblas_spmv_setup, libpsblas_spmv_teardown,
 };
 use hpla_rs::{load_mtx_raw, spmv_faer, spmv_faer_csr};
 use std::fs;
@@ -283,9 +282,9 @@ fn bench_spmv(c: &mut Criterion) {
 criterion_group!(
     name = benches;
     config = Criterion::default()
-        .sample_size(100)
+        .sample_size(20)
         .warm_up_time(std::time::Duration::from_secs(3))
-        .measurement_time(std::time::Duration::from_secs(20));
+        .measurement_time(std::time::Duration::from_secs(5));
     targets = bench_spmv
 );
 criterion_main!(benches);

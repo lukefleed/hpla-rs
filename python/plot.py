@@ -1,21 +1,24 @@
-import os
+#!/usr/bin/env python3
+
 import sys
-
-_old_stderr = sys.stderr
-sys.stderr = open(os.devnull, 'w')
-
 import warnings
-warnings.filterwarnings("ignore")
-
 import argparse
 import json
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
 from pathlib import Path
 
-sys.stderr.close()
-sys.stderr = _old_stderr
+warnings.filterwarnings("ignore")
+
+try:
+    import numpy as np
+    import pandas as pd
+    import matplotlib.pyplot as plt
+except ModuleNotFoundError as exc:
+    sys.stderr.write(
+        "error: missing Python dependency for plotting: "
+        f"{exc.name}\n"
+        "       install requirements with: pip3 install -r python/requirements.txt\n"
+    )
+    sys.exit(1)
 
 plt.style.use('seaborn-v0_8-whitegrid')
 plt.rcParams.update({
@@ -61,6 +64,7 @@ LANCZOS_TWO_PASS_CONFIG_ORDER = [
     'faer/two_pass',
     'eigen_csr/two_pass', 'eigen_csc/two_pass',
     'eigen/two_pass',
+    'petsc_csr/two_pass',
     'psblas/two_pass',
 ]
 
@@ -71,6 +75,7 @@ LANCZOS_TWO_PASS_BACKEND_COLORS = {
     'eigen_csr/two_pass':  '#E69F00',  # orange
     'eigen_csc/two_pass':  '#CC79A7',  # pink
     'eigen/two_pass':      '#E69F00',  # orange (legacy naming)
+    'petsc_csr/two_pass':  '#009E73',  # green
     'psblas/two_pass':     '#D55E00',  # vermilion
 }
 
@@ -83,6 +88,7 @@ LANCZOS_ONE_PASS_CONFIG_ORDER = [
     'faer/one_pass',
     'eigen_csr/one_pass', 'eigen_csc/one_pass',
     'eigen/one_pass',
+    'petsc_csr/one_pass',
     'psblas/one_pass',
 ]
 
@@ -93,6 +99,7 @@ LANCZOS_ONE_PASS_BACKEND_COLORS = {
     'eigen_csr/one_pass':  '#E69F00',  # orange
     'eigen_csc/one_pass':  '#CC79A7',  # pink
     'eigen/one_pass':      '#E69F00',  # orange (legacy naming)
+    'petsc_csr/one_pass':  '#009E73',  # green
     'psblas/one_pass':     '#D55E00',  # vermilion
 }
 

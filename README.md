@@ -102,15 +102,14 @@ bash stream_bench.sh   # writes python/hw_config.json
 
 ## Hardware
 
-All benchmarks run pinned to a single core on a dual-socket Intel Xeon Gold 5318Y (Ice Lake-SP).
+All benchmarks run pinned to a single core on a quad-socket Intel Xeon Gold 6418H (Sapphire Rapids).
 
 | | |
 |---|---|
-| CPU | Intel Xeon Gold 5318Y @ 2.10 GHz |
-| Microarchitecture | Ice Lake-SP |
-| L1d / L2 / L3 | 48 KB / 1.25 MB / 36 MB per socket |
-| ISA | AVX-512F/BW/VL/VNNI |
-| STREAM Triad (1 core) | 13.53 GB/s |
+| CPU | Intel Xeon Gold 6418H @ 4.0 GHz (24 cores, 2 threads per core) |
+| Microarchitecture | Sapphire Rapids |
+| L1d / L2 / L3 | 48 KB / 2 MB / 60 MB per socket |
+| ISA | AVX-512F/BW/VL/VNNI/BF16/FP16, AMX |
 
 ## Compiler flags
 

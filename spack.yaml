@@ -1,41 +1,41 @@
 # Spack environment for SpMV benchmarks.
 #
+# Bootstrap (once per machine):
+#   source ~/spack/share/spack/setup-env.sh
+#   spack external find
+#   spack install gcc@14.3.0 languages=fortran,c,c++
+#
 # Usage:
 #   source ~/spack/share/spack/setup-env.sh
 #   spack env activate -d .
 #   spack concretize -f
-#   spack install
+#   spack install -v
 #
 # After installation, `spack env activate -d .` makes all packages
 # available without individual `spack load` commands.
-
+#
 spack:
   specs:
-    - intel-oneapi-mkl
-    - openmpi
-    - eigen
-    - petsc ~mpi +double ~debug +shared +metis
-        cflags='-g -O3 -march=native -mtune=native -flto'
-        cxxflags='-g -O3 -march=native -mtune=native -flto'
-        fflags='-g -O3 -march=native -mtune=native -flto -ffree-line-length-none'
-        ^intel-oneapi-mkl
-    - psblas@develop +mpi
-        cflags='-g -O3 -march=native -mtune=native -flto -ffat-lto-objects'
-        cxxflags='-g -O3 -march=native -mtune=native -flto -ffat-lto-objects'
-        fflags='-g -O3 -march=native -mtune=native -flto -ffat-lto-objects -ffree-line-length-none'
-        fcopt='-frecursive' libs='-lgomp'
-        ^openmpi ^intel-oneapi-mkl
+  - intel-oneapi-mkl
+  - openblas
+  - openmpi
+  - eigen
+  # LLVM major version must match Rust's bundled LLVM for cross-language LTO.
+  # Bitcode format is stable within a major; @21 resolves to the latest 21.x.
+  # rustc 1.94.x ships LLVM 21.x; LLVM 22+ produces bitcode rust-lld cannot
+  # read. To check: rustc --version --verbose | grep 'LLVM version'.
+  - llvm@21 +clang +lld ~lldb ~polly ~mlir ~flang ~gold ~python targets=x86 compiler-rt=none libcxx=none
+  - petsc ~mpi +double ~debug +shared +metis cflags='-g -O3 -march=native -mtune=native -flto' cxxflags='-g -O3 -march=native -mtune=native -flto' fflags='-g -O3 -march=native -mtune=native -flto -ffree-line-length-none' ^intel-oneapi-mkl
+  - psblas@develop +mpi cflags='-g -O3 -march=native -mtune=native -flto -ffat-lto-objects -fPIC' cxxflags='-g -O3 -march=native -mtune=native -flto -ffat-lto-objects -fPIC' fflags='-g -O3 -march=native -mtune=native -flto -ffat-lto-objects -fPIC -ffree-line-length-none' fcopt='-frecursive -fPIC' libs='-lgomp' ^openmpi ^openblas
 
   packages:
+    gcc:
+      externals: []
     all:
-      require: '%gcc@11.4.0'
+      require: '%gcc@14.3.0'
       target: [icelake]
-    blas:
-      require: 'intel-oneapi-mkl'
-    lapack:
-      require: 'intel-oneapi-mkl'
     mpi:
-      require: 'openmpi'
+      require: openmpi
 
   concretizer:
-    unify: true
+    unify: when_possible

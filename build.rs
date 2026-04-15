@@ -10,6 +10,88 @@ use std::path::PathBuf;
 use std::process::Command;
 
 fn main() {
+    // Resolve clang/clang++ from the spack-managed LLVM installation.
+    // All C/C++ FFI wrappers use clang for cross-language LTO with Rust.
+    let llvm_output = Command::new("spack")
+        .args(["location", "-i", "llvm"])
+        .output()
+        .expect("Failed to execute spack command for LLVM. Is spack sourced & in your PATH?");
+
+    assert!(
+        llvm_output.status.success(),
+        "spack location -i llvm failed. Make sure LLVM is installed via Spack.\nError: {}",
+        String::from_utf8_lossy(&llvm_output.stderr)
+    );
+    let llvm_dir = PathBuf::from(String::from_utf8_lossy(&llvm_output.stdout).trim());
+    let clang = llvm_dir.join("bin/clang");
+    let clangxx = llvm_dir.join("bin/clang++");
+
+    // Verify that the spack-installed LLVM major version matches rustc's
+    // bundled LLVM.  A major-version mismatch causes rust-lld to reject the
+    // clang-produced bitcode with "Unknown attribute kind", which is hard to
+    // diagnose.  Fail early with a clear message instead.
+    let clang_version_out = Command::new(&clang)
+        .arg("--version")
+        .output()
+        .expect("Failed to run clang --version");
+    let clang_ver_str = String::from_utf8_lossy(&clang_version_out.stdout);
+    // clang --version: "clang version 21.1.8 ..."
+    let clang_major: u32 = clang_ver_str
+        .split_whitespace()
+        .nth(2) // "21.1.8"
+        .and_then(|v| v.split('.').next())
+        .and_then(|m| m.parse().ok())
+        .expect("Could not parse clang major version from 'clang --version'");
+
+    let rustc_llvm_out = Command::new("rustc")
+        .args(["--version", "--verbose"])
+        .output()
+        .expect("Failed to run rustc --version --verbose");
+    let rustc_llvm_str = String::from_utf8_lossy(&rustc_llvm_out.stdout);
+    // Output contains: "LLVM version: 21.1.8"
+    let rustc_llvm_major: u32 = rustc_llvm_str
+        .lines()
+        .find(|l| l.starts_with("LLVM version:"))
+        .and_then(|l| l.split_whitespace().nth(2))
+        .and_then(|v| v.split('.').next())
+        .and_then(|m| m.parse().ok())
+        .expect("Could not parse LLVM version from 'rustc --version --verbose'");
+
+    assert!(
+        clang_major == rustc_llvm_major,
+        "LLVM major version mismatch: clang is LLVM {clang_major}, \
+         rustc ships LLVM {rustc_llvm_major}. \
+         Cross-language LTO requires matching major versions. \
+         Update spack.yaml: change 'llvm@{clang_major}' to 'llvm@{rustc_llvm_major}', \
+         then run 'spack concretize -f && spack install'."
+    );
+
+    // Resolve gfortran from the spack-managed gcc installation.
+    // Used for the Fortran PSBLAS wrapper.
+    let gcc_output = Command::new("spack")
+        .args(["location", "-i", "gcc"])
+        .output()
+        .expect("Failed to execute spack command for gcc. Is spack sourced & in your PATH?");
+
+    assert!(
+        gcc_output.status.success(),
+        "spack location -i gcc failed. Make sure gcc is installed via Spack.\nError: {}",
+        String::from_utf8_lossy(&gcc_output.stderr)
+    );
+    let gcc_dir = PathBuf::from(String::from_utf8_lossy(&gcc_output.stdout).trim());
+    let gfortran = gcc_dir.join("bin/gfortran");
+    let gcc_lib = gcc_dir.join("lib");
+    let gcc_lib64 = gcc_dir.join("lib64");
+
+    if gcc_lib.exists() {
+        println!("cargo::rustc-link-search=native={}", gcc_lib.display());
+        println!("cargo::rustc-link-arg=-Wl,-rpath,{}", gcc_lib.display());
+    }
+    if gcc_lib64.exists() {
+        println!("cargo::rustc-link-search=native={}", gcc_lib64.display());
+        println!("cargo::rustc-link-arg=-Wl,-rpath,{}", gcc_lib64.display());
+    }
+
     let petsc_output = Command::new("spack")
         .args(["location", "-i", "petsc"])
         .output()
@@ -34,15 +116,39 @@ fn main() {
     println!("cargo::rustc-link-arg=-Wl,-rpath,{}", petsc_lib.display());
 
     cc::Build::new()
-        .compiler("clang")
+        .compiler(&clang)
         .file("ffi/spmv/petsc.c")
-        .include(petsc_include)
+        .include(&petsc_include)
         .flag("-O3")
         .flag("-march=native")
         .flag("-mtune=native")
         .flag("-ffast-math")
         .flag("-flto")
         .compile("petsc_wrapper");
+
+    // One-pass Lanczos via PETSc.
+    cc::Build::new()
+        .compiler(&clang)
+        .file("ffi/lanczos/petsc_lanczos.c")
+        .include(&petsc_include)
+        .flag("-O3")
+        .flag("-march=native")
+        .flag("-mtune=native")
+        .flag("-ffast-math")
+        .flag("-flto")
+        .compile("petsc_lanczos_wrapper");
+
+    // Two-pass Lanczos via PETSc.
+    cc::Build::new()
+        .compiler(&clang)
+        .file("ffi/lanczos/petsc_lanczos_two_pass.c")
+        .include(&petsc_include)
+        .flag("-O3")
+        .flag("-march=native")
+        .flag("-mtune=native")
+        .flag("-ffast-math")
+        .flag("-flto")
+        .compile("petsc_lanczos_two_pass_wrapper");
 
     let eigen_output = Command::new("spack")
         .args(["location", "-i", "eigen"])
@@ -62,7 +168,7 @@ fn main() {
         .cpp(true)
         .file("ffi/spmv/eigen.cpp")
         .include(&eigen_include)
-        .compiler("clang++")
+        .compiler(&clangxx)
         .flag("-O3")
         .flag("-march=native")
         .flag("-mtune=native")
@@ -76,7 +182,7 @@ fn main() {
         .std("c++20")
         .file("ffi/lanczos/eigen_lanczos_two_pass.cpp")
         .include(&eigen_include)
-        .compiler("clang++")
+        .compiler(&clangxx)
         .flag("-O3")
         .flag("-march=native")
         .flag("-mtune=native")
@@ -90,7 +196,7 @@ fn main() {
         .std("c++20")
         .file("ffi/lanczos/eigen_lanczos.cpp")
         .include(&eigen_include)
-        .compiler("clang++")
+        .compiler(&clangxx)
         .flag("-O3")
         .flag("-march=native")
         .flag("-mtune=native")
@@ -131,7 +237,7 @@ fn main() {
     cc::Build::new()
         .file("ffi/spmv/mkl.c")
         .include(mkl_include)
-        .compiler("clang")
+        .compiler(&clang)
         .flag("-O3")
         .flag("-march=native")
         .flag("-mtune=native")
@@ -181,7 +287,7 @@ fn main() {
         .file("ffi/spmv/psblas.cpp")
         .include(&psblas_include)
         .include(&mpi_include)
-        .compiler("clang++")
+        .compiler(&clangxx)
         .flag("-O3")
         .flag("-march=native")
         .flag("-mtune=native")
@@ -203,7 +309,7 @@ fn main() {
     cc::Build::new()
         .file("ffi/lanczos/psblas_lanczos.f90")
         .include(&psblas_modules)
-        .compiler("gfortran")
+        .compiler(&gfortran)
         .flag("-O3")
         .flag("-march=native")
         .flag("-mtune=native")
@@ -218,7 +324,7 @@ fn main() {
     // cc::Build::new()
     //     .file("ffi/lanczos/psblas_lanczos_two_pass.f90")
     //     .include(&psblas_modules)
-    //     .compiler("gfortran")
+    //     .compiler(&gfortran)
     //     .flag("-O3")
     //     .flag("-march=native")
     //     .flag("-mtune=native")
@@ -258,6 +364,8 @@ fn main() {
     println!("cargo::rerun-if-changed=ffi/spmv/psblas.cpp");
     println!("cargo::rerun-if-changed=ffi/lanczos/psblas_lanczos.f90");
     println!("cargo::rerun-if-changed=ffi/lanczos/psblas_lanczos_two_pass.f90");
+    println!("cargo::rerun-if-changed=ffi/lanczos/petsc_lanczos.c");
+    println!("cargo::rerun-if-changed=ffi/lanczos/petsc_lanczos_two_pass.c");
     // Force rebuild when spack environment changes (e.g. package reinstall)
     println!("cargo::rerun-if-env-changed=SPACK_ROOT");
 }

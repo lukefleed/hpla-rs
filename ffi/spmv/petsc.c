@@ -38,7 +38,7 @@ PetscBenchContext* libpetsc_spmv_setup(
         PetscInitializeNoArguments();
     }
 
-    PetscBenchContext* ctx = (PetscBenchContext*)malloc(sizeof(PetscBenchContext));
+    PetscBenchContext* ctx = malloc(sizeof *ctx);
     if (!ctx) return NULL;
     ctx->nrows = nrows;
     ctx->ncols = ncols;
@@ -49,10 +49,8 @@ PetscBenchContext* libpetsc_spmv_setup(
     VecSet(ctx->x, 1.0);
     VecSet(ctx->y, 0.0);
 
-    /*
-        Petsc's MatCreateSeqAIJWithArrays uses the provided memory directly.
-        This is zero-copy and identical to Rust.
-    */
+    // PETSc API does not declare these parameters const; the zero-copy
+    // contract guarantees PETSc will not modify the caller's arrays.
     MatCreateSeqAIJWithArrays(PETSC_COMM_SELF, nrows, ncols, (PetscInt*)row_ptr, (PetscInt*)col_idx, (PetscScalar*)values, &ctx->A);
 
     if (disable_inode) {
@@ -67,10 +65,10 @@ void libpetsc_spmv_execute(PetscBenchContext* ctx) {
     MatMultAdd(ctx->A, ctx->x, ctx->y, ctx->y);
 }
 
-void libpetsc_spmv_get_y(PetscBenchContext* ctx, double* out, int32_t len) {
+void libpetsc_spmv_get_y(PetscBenchContext* ctx, double *restrict out, int32_t len) {
     const PetscScalar *y_array;
     VecGetArrayRead(ctx->y, &y_array);
-    int32_t n = len < ctx->nrows ? len : ctx->nrows;
+    const int32_t n = len < ctx->nrows ? len : ctx->nrows;
     for (int32_t i = 0; i < n; i++) out[i] = y_array[i];
     VecRestoreArrayRead(ctx->y, &y_array);
 }
