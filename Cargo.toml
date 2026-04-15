@@ -33,6 +33,9 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 debug = false
+overflow-checks = false
+debug-assertions = false
+strip = "symbols"
 
 [profile.release.package."*"]
 opt-level = 3
