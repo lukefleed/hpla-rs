@@ -8,8 +8,9 @@
 use super::{LanczosError, LanczosErrorKind, LanczosIteration, breakdown_tolerance};
 use crate::lanczos::solvers::TwoPassWorkspace;
 use faer::{
-    Par,
+    Accum, Par,
     dyn_stack::MemStack,
+    linalg::matmul::matmul,
     matrix_free::LinOp,
     prelude::*,
 };
@@ -163,10 +164,11 @@ pub(crate) fn lanczos_pass_two_into<O: LinOp<f64>>(
             *w_i *= inv_beta;
         });
 
+        // x_k += coeff * work  (SIMD via matvec_colmajor fast-path)
         let coeff = y_k[(j + 1, 0)];
-        zip!(x_k.as_mut(), work.as_ref()).for_each(|unzip!(x_i, v_i)| {
-            *x_i += coeff * *v_i;
-        });
+        let one_val = 1.0_f64;
+        let one_mat = unsafe { MatRef::<f64>::from_raw_parts(&one_val, 1, 1, 1, 1) };
+        matmul(x_k.as_mut(), Accum::Add, work.as_ref(), one_mat, coeff, par);
 
         core::mem::swap(v_prev, v_curr);
         core::mem::swap(v_curr, work);

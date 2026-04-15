@@ -8,8 +8,9 @@ pub mod lanczos_two_pass;
 
 use crate::lanczos::error::{LanczosError, LanczosErrorKind};
 use faer::{
-    Par,
+    Accum, Conj, Par,
     dyn_stack::{MemStack, StackReq},
+    linalg::matmul::{dot::inner_prod, matmul},
     matrix_free::LinOp,
     prelude::*,
 };
@@ -68,16 +69,23 @@ pub(crate) fn lanczos_recurrence_step<O: LinOp<f64>>(
 ) -> f64 {
     operator.apply(w.rb_mut(), v_curr, par, stack);
 
-    // Fused: w -= beta_prev * v_prev AND alpha = <v_curr, w>, one memory pass.
-    let mut alpha = 0.0_f64;
-    zip!(w.rb_mut(), v_prev, v_curr).for_each(|unzip!(w_i, v_prev_i, v_curr_i)| {
-        *w_i -= beta_prev * *v_prev_i;
-        alpha += *v_curr_i * *w_i;
-    });
+    // 1×1 identity rhs on the stack for the matmul axpy idiom.
+    let one_val = 1.0_f64;
+    let one_mat = unsafe { MatRef::<f64>::from_raw_parts(&one_val, 1, 1, 1, 1) };
 
-    zip!(w.rb_mut(), v_curr).for_each(|unzip!(w_i, v_curr_i)| {
-        *w_i -= alpha * *v_curr_i;
-    });
+    // w -= beta_prev * v_prev  (SIMD via matvec_colmajor fast-path)
+    matmul(w.rb_mut(), Accum::Add, v_prev, one_mat, -beta_prev, par);
+
+    // alpha = <v_curr, w>  (4-way SIMD-unrolled dot product)
+    let alpha: f64 = inner_prod(
+        v_curr.col(0).transpose(),
+        Conj::No,
+        w.rb().col(0),
+        Conj::No,
+    );
+
+    // w -= alpha * v_curr  (SIMD via matvec_colmajor fast-path)
+    matmul(w.rb_mut(), Accum::Add, v_curr, one_mat, -alpha, par);
 
     alpha
 }
