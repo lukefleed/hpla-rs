@@ -282,9 +282,9 @@ fn bench_spmv(c: &mut Criterion) {
 criterion_group!(
     name = benches;
     config = Criterion::default()
-        .sample_size(20)
+        .sample_size(50)
         .warm_up_time(std::time::Duration::from_secs(3))
-        .measurement_time(std::time::Duration::from_secs(5));
+        .measurement_time(std::time::Duration::from_secs(30));
     targets = bench_spmv
 );
 criterion_main!(benches);

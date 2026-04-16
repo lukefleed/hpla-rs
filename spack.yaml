@@ -33,9 +33,9 @@ spack:
       externals: []
     all:
       require: '%gcc@14.3.0'
-      target: [icelake]
+      target: [sapphirerapids]
     mpi:
       require: openmpi
 
   concretizer:
-    unify: when_possible
+    unify: true
