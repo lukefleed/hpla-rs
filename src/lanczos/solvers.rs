@@ -16,11 +16,7 @@ use crate::lanczos::{
     error::{LanczosError, LanczosErrorKind},
 };
 use faer::{
-    Accum, Par,
-    dyn_stack::MemStack,
-    linalg::matmul::matmul,
-    matrix_free::LinOp,
-    prelude::*,
+    Accum, Par, dyn_stack::MemStack, linalg::matmul::matmul, matrix_free::LinOp, prelude::*,
 };
 
 /// Working buffers for a one-pass Lanczos run at a fixed `(n, k_cap)`.
@@ -38,6 +34,7 @@ pub struct LanczosWorkspace {
     work: Mat<f64>,
     alphas: Vec<f64>,
     betas: Vec<f64>,
+    g_k: Mat<f64>,
     x_k: Mat<f64>,
     b_norm: f64,
     k_cap: usize,
@@ -55,6 +52,7 @@ impl LanczosWorkspace {
             work: Mat::zeros(n, 1),
             alphas: Vec::with_capacity(k),
             betas: Vec::with_capacity(k),
+            g_k: Mat::zeros(k, 1),
             x_k: Mat::zeros(n, 1),
             b_norm: 0.0,
             k_cap: k,
@@ -131,6 +129,7 @@ pub struct TwoPassWorkspace {
     work: Mat<f64>,
     alphas: Vec<f64>,
     betas: Vec<f64>,
+    g_k: Mat<f64>,
     x_k: Mat<f64>,
     b_norm: f64,
     k_cap: usize,
@@ -147,6 +146,7 @@ impl TwoPassWorkspace {
             work: Mat::zeros(n, 1),
             alphas: Vec::with_capacity(k),
             betas: Vec::with_capacity(k),
+            g_k: Mat::zeros(k, 1),
             x_k: Mat::zeros(n, 1),
             b_norm: 0.0,
             k_cap: k,
@@ -219,13 +219,14 @@ impl TwoPassWorkspace {
 }
 
 /// One-pass Lanczos for `f(A) b`: stores the full basis `V_k` (`O(nk)` memory)
-/// and invokes `f_tk` on the resulting tridiagonal coefficients. The result
+/// and invokes `f_tk` on the resulting tridiagonal coefficients, writing the
+/// projected result into the preallocated buffer `ws.g_k`. The final result
 /// `x_k = ||b|| V_k f(T_k) e_1` is written into `ws.x_k`.
 ///
 /// # Errors
 /// Returns [`LanczosError`] if `b` has the wrong number of rows, if `k`
 /// exceeds `ws.k_cap`, on zero input, on breakdown mishandling, or if `f_tk`
-/// fails or returns a vector of the wrong length.
+/// fails.
 #[expect(
     clippy::too_many_arguments,
     reason = "direct translation of the existing allocating API; grouping would fight the LinOp/closure generics"
@@ -242,7 +243,7 @@ pub fn lanczos_into<O, F>(
 ) -> Result<(), LanczosError>
 where
     O: LinOp<f64>,
-    F: FnMut(&[f64], &[f64]) -> Result<Mat<f64>, anyhow::Error>,
+    F: FnMut(&[f64], &[f64], MatMut<'_, f64>) -> Result<(), anyhow::Error>,
 {
     if b.nrows() != ws.n() {
         return Err(LanczosErrorKind::ParameterMismatch {
@@ -275,44 +276,31 @@ where
     let alphas_slice = &ws.alphas[..n_alpha];
     let betas_slice = &ws.betas[..n_beta];
 
-    let g = f_tk(alphas_slice, betas_slice)
+    let g = ws.g_k.as_mut().subrows_mut(0, steps_taken);
+    f_tk(alphas_slice, betas_slice, g)
         .map_err(|e| LanczosError::from(LanczosErrorKind::SolverError(e.to_string())))?;
-
-    if g.nrows() != steps_taken || g.ncols() != 1 {
-        return Err(LanczosErrorKind::ParameterMismatch {
-            param_name: "g".to_string(),
-            expected: steps_taken,
-            actual: g.nrows(),
-        }
-        .into());
-    }
 
     // x_k = ||b|| * V_k * g via faer's optimized dense GEMV.
     // g is m×1, so matmul dispatches into the SIMD-vectorized
     // matvec_colmajor fast-path. Par::Seq is zero-allocation.
     let b_norm = ws.b_norm();
     let v_k_slice = ws.v_k.as_ref().get(.., 0..steps_taken);
-    matmul(
-        ws.x_k.as_mut(),
-        Accum::Replace,
-        v_k_slice,
-        g.as_ref(),
-        b_norm,
-        par,
-    );
+    let g = ws.g_k.as_ref().subrows(0, steps_taken);
+    matmul(ws.x_k.as_mut(), Accum::Replace, v_k_slice, g, b_norm, par);
 
     Ok(())
 }
 
 /// Two-pass Lanczos for `f(A) b`: the first pass produces only the
-/// tridiagonal scalars, the second pass replays the recurrence to
-/// accumulate `x_k = V_k y_k` with `O(n)` working memory. The result is
-/// written into `ws.x_k`.
+/// tridiagonal scalars, `f_tk` writes the projected result into `ws.g_k`,
+/// and the second pass replays the recurrence to accumulate
+/// `x_k = V_k y_k` with `O(n)` working memory. The result is written into
+/// `ws.x_k`.
 ///
 /// # Errors
 /// Returns [`LanczosError`] if `b` has the wrong number of rows, if `k`
 /// exceeds `ws.k_cap`, on zero input, on breakdown mishandling, or if `f_tk`
-/// fails or returns a vector of the wrong length.
+/// fails.
 pub fn lanczos_two_pass_into<O, F>(
     ws: &mut TwoPassWorkspace,
     operator: &O,
@@ -324,7 +312,7 @@ pub fn lanczos_two_pass_into<O, F>(
 ) -> Result<(), LanczosError>
 where
     O: LinOp<f64>,
-    F: FnMut(&[f64], &[f64]) -> Result<Mat<f64>, anyhow::Error>,
+    F: FnMut(&[f64], &[f64], MatMut<'_, f64>) -> Result<(), anyhow::Error>,
 {
     if b.nrows() != ws.n() {
         return Err(LanczosErrorKind::ParameterMismatch {
@@ -355,25 +343,32 @@ where
     let alphas_slice = &ws.alphas[..n_alpha];
     let betas_slice = &ws.betas[..n_beta];
 
-    let mut g = f_tk(alphas_slice, betas_slice)
-        .map_err(|e| LanczosError::from(LanczosErrorKind::SolverError(e.to_string())))?;
+    let b_norm = ws.b_norm();
+    let mut g_k = Mat::<f64>::zeros(0, 1);
+    core::mem::swap(&mut g_k, &mut ws.g_k);
 
-    if g.nrows() != steps_taken || g.ncols() != 1 {
-        return Err(LanczosErrorKind::ParameterMismatch {
-            param_name: "g".to_string(),
-            expected: steps_taken,
-            actual: g.nrows(),
-        }
-        .into());
+    let solve_result = {
+        let mut g = g_k.as_mut().subrows_mut(0, steps_taken);
+        f_tk(alphas_slice, betas_slice, g.rb_mut())
+            .map_err(|e| LanczosError::from(LanczosErrorKind::SolverError(e.to_string())))?;
+
+        // Fold ||b|| into y_k in place so pass two accumulates x_k directly.
+        zip!(g.rb_mut()).for_each(|unzip!(y_i)| {
+            *y_i *= b_norm;
+        });
+        Ok::<(), LanczosError>(())
+    };
+
+    if let Err(err) = solve_result {
+        core::mem::swap(&mut g_k, &mut ws.g_k);
+        return Err(err);
     }
 
-    // Fold ||b|| into y_k in place so pass two accumulates x_k directly.
-    let b_norm = ws.b_norm();
-    zip!(g.as_mut()).for_each(|unzip!(y_i)| {
-        *y_i *= b_norm;
-    });
+    let g = g_k.as_ref().subrows(0, steps_taken);
+    let result = lanczos_pass_two_into(ws, operator, b, g, steps_taken, par, stack);
 
-    lanczos_pass_two_into(ws, operator, b, g.as_ref(), steps_taken, par, stack)
+    core::mem::swap(&mut g_k, &mut ws.g_k);
+    result
 }
 
 /// Allocating wrapper over [`lanczos_into`]: builds a fresh workspace and
@@ -393,7 +388,7 @@ pub fn lanczos<O, F>(
 ) -> Result<Mat<f64>, LanczosError>
 where
     O: LinOp<f64>,
-    F: FnMut(&[f64], &[f64]) -> Result<Mat<f64>, anyhow::Error>,
+    F: FnMut(&[f64], &[f64], MatMut<'_, f64>) -> Result<(), anyhow::Error>,
 {
     let mut ws = LanczosWorkspace::new(b.nrows(), k);
     lanczos_into(&mut ws, operator, b, k, par, reorthog, stack, f_tk)?;
@@ -417,7 +412,7 @@ pub fn lanczos_two_pass<O, F>(
 ) -> Result<Mat<f64>, LanczosError>
 where
     O: LinOp<f64>,
-    F: FnMut(&[f64], &[f64]) -> Result<Mat<f64>, anyhow::Error>,
+    F: FnMut(&[f64], &[f64], MatMut<'_, f64>) -> Result<(), anyhow::Error>,
 {
     let mut ws = TwoPassWorkspace::new(b.nrows(), k);
     lanczos_two_pass_into(&mut ws, operator, b, k, par, stack, f_tk)?;

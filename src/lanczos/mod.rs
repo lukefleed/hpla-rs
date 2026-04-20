@@ -8,21 +8,17 @@ pub(crate) mod algorithms;
 #[cfg(test)]
 pub(crate) mod alloc_counter;
 pub mod error;
+mod projected;
 pub mod solvers;
 
 pub use algorithms::{LanczosDecomposition, Reorthogonalization, lanczos_scratch};
+pub use projected::ProjectedTridiagonalWorkspace;
 pub use solvers::{
     LanczosWorkspace, TwoPassWorkspace, lanczos, lanczos_into, lanczos_two_pass,
     lanczos_two_pass_into,
 };
 
-use faer::{
-    Par, Side,
-    dyn_stack::MemStack,
-    linalg::solvers::SelfAdjointEigen,
-    matrix_free::LinOp,
-    prelude::*,
-};
+use faer::{Par, dyn_stack::MemStack, matrix_free::LinOp, prelude::*};
 
 use crate::lanczos::algorithms::lanczos_two_pass::lanczos_pass_one_into;
 use crate::lanczos::error::LanczosError;
@@ -52,8 +48,11 @@ pub fn deterministic_rhs(n: usize) -> Vec<f64> {
 }
 
 /// Computes `exp(-T_k) e_1` for the tridiagonal `T_k` defined by `alphas`
-/// (diagonal) and `betas` (off-diagonal). Dense eigendecomposition of `-T_k`
-/// is acceptable because `k` is small.
+/// (diagonal) and `betas` (off-diagonal).
+///
+/// Allocates a fresh projected-solve workspace. Hot loops should instead
+/// reuse [`ProjectedTridiagonalWorkspace`] and call
+/// [`ProjectedTridiagonalWorkspace::exp_neg_tk`] directly.
 ///
 /// # Errors
 /// Returns an error if the self-adjoint eigendecomposition fails.
@@ -63,30 +62,9 @@ pub fn exp_neg_tk(alphas: &[f64], betas: &[f64]) -> Result<Mat<f64>, anyhow::Err
         return Ok(Mat::zeros(0, 1));
     }
 
-    let mut neg_t_k = Mat::<f64>::zeros(k, k);
-    for i in 0..k {
-        neg_t_k[(i, i)] = -alphas[i];
-    }
-    for i in 0..betas.len() {
-        neg_t_k[(i, i + 1)] = -betas[i];
-        neg_t_k[(i + 1, i)] = -betas[i];
-    }
-
-    let evd = SelfAdjointEigen::new(neg_t_k.as_ref(), Side::Lower)
-        .map_err(|e| anyhow::anyhow!("eigendecomposition of -T_k failed: {e:?}"))?;
-    let q = evd.U();
-    let s = evd.S();
-    let eigenvalues = s.column_vector();
-
     let mut result = Mat::<f64>::zeros(k, 1);
-    for j in 0..k {
-        let exp_lambda = eigenvalues.get(j).exp();
-        let q_0j = q[(0, j)];
-        for i in 0..k {
-            result[(i, 0)] += exp_lambda * q_0j * q[(i, j)];
-        }
-    }
-
+    let mut projected = ProjectedTridiagonalWorkspace::new(k, Par::Seq);
+    projected.exp_neg_tk(alphas, betas, result.as_mut())?;
     Ok(result)
 }
 
@@ -95,13 +73,25 @@ pub fn exp_neg_tk(alphas: &[f64], betas: &[f64]) -> Result<Mat<f64>, anyhow::Err
 /// where `beta_next = h_{m+1,m}` is the coupling element produced by the
 /// `m`-th step of the recurrence.
 pub fn saad_error_estimate(alphas: &[f64], betas: &[f64], beta_next: f64, b_norm: f64) -> f64 {
+    let mut projected = ProjectedTridiagonalWorkspace::new(alphas.len(), Par::Seq);
+    saad_error_estimate_with(&mut projected, alphas, betas, beta_next, b_norm)
+}
+
+fn saad_error_estimate_with(
+    projected: &mut ProjectedTridiagonalWorkspace,
+    alphas: &[f64],
+    betas: &[f64],
+    beta_next: f64,
+    b_norm: f64,
+) -> f64 {
     let m = alphas.len();
     if m == 0 {
         return 0.0;
     }
 
-    let exp_tm_e1 = match exp_neg_tk(alphas, betas) {
-        Ok(v) => v,
+    let mut exp_tm_e1 = Mat::<f64>::zeros(m, 1);
+    let exp_tm_e1 = match projected.exp_neg_tk(alphas, betas, exp_tm_e1.as_mut()) {
+        Ok(()) => exp_tm_e1,
         Err(_) => return f64::INFINITY,
     };
 
@@ -127,8 +117,7 @@ pub fn adaptive_krylov_dim(
     let probe_k = max_k + 1;
     let mut probe_ws = TwoPassWorkspace::new(b.nrows(), probe_k);
     // Run max_k + 1 steps so betas[max_k - 1] exists for the estimate at m = max_k.
-    let probe_steps_taken =
-        lanczos_pass_one_into(&mut probe_ws, operator, b, probe_k, par, stack)?;
+    let probe_steps_taken = lanczos_pass_one_into(&mut probe_ws, operator, b, probe_k, par, stack)?;
 
     let b_norm = probe_ws.b_norm();
     let probe_alphas = probe_ws.alphas();
@@ -147,12 +136,14 @@ pub fn adaptive_krylov_dim(
         ));
     }
 
+    let mut projected = ProjectedTridiagonalWorkspace::new(steps, par);
     for m in 1..=steps {
         if m > probe_betas.len() {
             break;
         }
         let beta_next = probe_betas[m - 1];
-        let err = saad_error_estimate(
+        let err = saad_error_estimate_with(
+            &mut projected,
             &probe_alphas[..m],
             &probe_betas[..m.saturating_sub(1)],
             beta_next,
@@ -201,24 +192,8 @@ pub fn estimate_spectral_radius(
     let alphas = probe_ws.alphas();
     let betas = probe_ws.betas();
     let k = steps_taken;
-
-    let mut t_k = Mat::<f64>::zeros(k, k);
-    for i in 0..k {
-        t_k[(i, i)] = alphas[i];
-    }
-    for i in 0..betas.len().min(k.saturating_sub(1)) {
-        t_k[(i, i + 1)] = betas[i];
-        t_k[(i + 1, i)] = betas[i];
-    }
-
-    let evd = SelfAdjointEigen::new(t_k.as_ref(), Side::Lower)
-        .map_err(|e| LanczosError::from(error::LanczosErrorKind::SolverError(
-            format!("eigendecomposition of T_k failed: {e:?}"),
-        )))?;
-    let eigenvalues = evd.S().column_vector();
-
-    Ok(eigenvalues
-        .iter()
-        .map(|&v| v.abs())
-        .fold(0.0_f64, f64::max))
+    let mut projected = ProjectedTridiagonalWorkspace::new(k, par);
+    projected
+        .spectral_radius(&alphas[..k], &betas[..betas.len().min(k.saturating_sub(1))])
+        .map_err(|e| LanczosError::from(error::LanczosErrorKind::SolverError(e.to_string())))
 }

@@ -283,8 +283,9 @@ fn test_lanczos_two_pass_backend_equivalence() -> anyhow::Result<()> {
         libeigen_lanczos_two_pass_setup, libeigen_lanczos_two_pass_teardown,
     };
     use crate::lanczos::{
-        KRYLOV_HARD_LIMIT, KRYLOV_MARGIN, SAAD_TOL, SPECTRAL_PROBE_STEPS, adaptive_krylov_dim,
-        deterministic_rhs, estimate_spectral_radius, exp_neg_tk, lanczos_two_pass,
+        KRYLOV_HARD_LIMIT, KRYLOV_MARGIN, ProjectedTridiagonalWorkspace, SAAD_TOL,
+        SPECTRAL_PROBE_STEPS, adaptive_krylov_dim, deterministic_rhs, estimate_spectral_radius,
+        lanczos_two_pass,
     };
     // Temporarily disabled while ffi/lanczos/psblas_lanczos_two_pass.f90 is WIP.
     // use crate::psblas::{
@@ -379,13 +380,14 @@ fn test_lanczos_two_pass_backend_equivalence() -> anyhow::Result<()> {
         let faer_ref: Vec<f64> = {
             let mut mem = MemBuffer::new(scratch_req);
             let stack = MemStack::new(&mut mem);
+            let mut projected = ProjectedTridiagonalWorkspace::new(krylov_dim, Par::Seq);
             let result = lanczos_two_pass(
                 &a_faer.as_ref(),
                 b_mat.as_ref(),
                 krylov_dim,
                 Par::Seq,
                 stack,
-                exp_neg_tk,
+                |alphas, betas, out| projected.exp_neg_tk(alphas, betas, out),
             )
             .map_err(|e| anyhow::anyhow!("{name}: faer lanczos_two_pass failed: {e}"))?;
             (0..raw.nrows).map(|i| result[(i, 0)]).collect()
@@ -514,8 +516,9 @@ fn test_lanczos_backend_equivalence() -> anyhow::Result<()> {
         libeigen_lanczos_setup, libeigen_lanczos_teardown,
     };
     use crate::lanczos::{
-        KRYLOV_HARD_LIMIT, KRYLOV_MARGIN, Reorthogonalization, SAAD_TOL, SPECTRAL_PROBE_STEPS,
-        adaptive_krylov_dim, deterministic_rhs, estimate_spectral_radius, exp_neg_tk, lanczos,
+        KRYLOV_HARD_LIMIT, KRYLOV_MARGIN, ProjectedTridiagonalWorkspace, Reorthogonalization,
+        SAAD_TOL, SPECTRAL_PROBE_STEPS, adaptive_krylov_dim, deterministic_rhs,
+        estimate_spectral_radius, lanczos,
     };
     use crate::psblas::{
         libpsblas_lanczos_execute, libpsblas_lanczos_get_y, libpsblas_lanczos_setup,
@@ -610,6 +613,7 @@ fn test_lanczos_backend_equivalence() -> anyhow::Result<()> {
         let faer_ref: Vec<f64> = {
             let mut mem = MemBuffer::new(scratch_req);
             let stack = MemStack::new(&mut mem);
+            let mut projected = ProjectedTridiagonalWorkspace::new(krylov_dim, Par::Seq);
             let result = lanczos(
                 &a_faer.as_ref(),
                 b_mat.as_ref(),
@@ -617,7 +621,7 @@ fn test_lanczos_backend_equivalence() -> anyhow::Result<()> {
                 Par::Seq,
                 Reorthogonalization::None,
                 stack,
-                exp_neg_tk,
+                |alphas, betas, out| projected.exp_neg_tk(alphas, betas, out),
             )
             .map_err(|e| anyhow::anyhow!("{name}: faer lanczos failed: {e}"))?;
             (0..raw.nrows).map(|i| result[(i, 0)]).collect()

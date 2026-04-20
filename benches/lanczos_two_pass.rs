@@ -19,7 +19,8 @@ use hpla_rs::eigen::{
     libeigen_lanczos_two_pass_setup, libeigen_lanczos_two_pass_teardown,
 };
 use hpla_rs::lanczos::{
-    TwoPassWorkspace, estimate_spectral_radius, exp_neg_tk, lanczos_two_pass_into,
+    ProjectedTridiagonalWorkspace, TwoPassWorkspace, estimate_spectral_radius,
+    lanczos_two_pass_into,
 };
 use hpla_rs::petsc::{
     libpetsc_lanczos_two_pass_execute, libpetsc_lanczos_two_pass_setup,
@@ -121,6 +122,7 @@ fn bench_lanczos_two_pass(c: &mut Criterion) {
         // accumulation pattern and the PSBLAS `_setup`/`_execute`
         // contract.
         let mut ws = TwoPassWorkspace::new(raw.nrows, krylov_dim);
+        let mut projected = ProjectedTridiagonalWorkspace::new(krylov_dim, Par::Seq);
         let mut mem = MemBuffer::new(scratch_req);
         group.bench_with_input(BenchmarkId::new("faer_csc", "two_pass"), &(), |bench, _| {
             bench.iter(|| {
@@ -132,7 +134,7 @@ fn bench_lanczos_two_pass(c: &mut Criterion) {
                     krylov_dim,
                     Par::Seq,
                     stack,
-                    exp_neg_tk,
+                    |alphas, betas, out| projected.exp_neg_tk(alphas, betas, out),
                 );
                 let _ = criterion::black_box(result);
             });
@@ -145,6 +147,7 @@ fn bench_lanczos_two_pass(c: &mut Criterion) {
             SparseRowMat::try_new_from_triplets(raw.nrows, raw.ncols, &raw.triplets).unwrap();
         let scratch_req_csr = a_faer_csr.as_ref().apply_scratch(1, Par::Seq);
         let mut ws_csr = TwoPassWorkspace::new(raw.nrows, krylov_dim);
+        let mut projected_csr = ProjectedTridiagonalWorkspace::new(krylov_dim, Par::Seq);
         let mut mem_csr = MemBuffer::new(scratch_req_csr);
         group.bench_with_input(BenchmarkId::new("faer_csr", "two_pass"), &(), |bench, _| {
             bench.iter(|| {
@@ -156,7 +159,7 @@ fn bench_lanczos_two_pass(c: &mut Criterion) {
                     krylov_dim,
                     Par::Seq,
                     stack,
-                    exp_neg_tk,
+                    |alphas, betas, out| projected_csr.exp_neg_tk(alphas, betas, out),
                 );
                 let _ = criterion::black_box(result);
             });
@@ -290,9 +293,9 @@ fn bench_lanczos_two_pass(c: &mut Criterion) {
 criterion_group!(
     name = benches;
     config = Criterion::default()
-        .sample_size(10)
-        .warm_up_time(std::time::Duration::from_secs(3))
-        .measurement_time(std::time::Duration::from_secs(10));
+        .sample_size(50)
+        .warm_up_time(std::time::Duration::from_secs(5))
+        .measurement_time(std::time::Duration::from_secs(100));
     targets = bench_lanczos_two_pass
 );
 criterion_main!(benches);

@@ -241,4 +241,3 @@ pub fn spmv_faer_csr(a: &SparseRowMat<u32, f64>, x: &Col<f64>, y: &mut Col<f64>)
         Par::Seq,
     );
 }
-

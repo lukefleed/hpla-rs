@@ -5,11 +5,7 @@
 use super::{LanczosError, LanczosIteration, Reorthogonalization, breakdown_tolerance};
 use crate::lanczos::solvers::LanczosWorkspace;
 use faer::{
-    Conj, Par,
-    dyn_stack::MemStack,
-    linalg::matmul::dot::inner_prod,
-    matrix_free::LinOp,
-    prelude::*,
+    Conj, Par, dyn_stack::MemStack, linalg::matmul::dot::inner_prod, matrix_free::LinOp, prelude::*,
 };
 
 /// Runs up to `k` steps of symmetric Lanczos with the basis stored in full
@@ -82,11 +78,9 @@ pub(crate) fn lanczos_one_pass_into<O: LinOp<f64>>(
                                 w.as_ref().col(0),
                                 Conj::No,
                             );
-                            zip!(w.as_mut(), v_col.as_mat()).for_each(
-                                |unzip!(w_i, u_i)| {
-                                    *w_i -= h * *u_i;
-                                },
-                            );
+                            zip!(w.as_mut(), v_col.as_mat()).for_each(|unzip!(w_i, u_i)| {
+                                *w_i -= h * *u_i;
+                            });
                         }
                     }
                 })
@@ -252,9 +246,7 @@ mod tests {
 
         let none_err = orthonormality_error(&none.v_k);
         let full_err = orthonormality_error(&full.v_k);
-        eprintln!(
-            "diag(1..{n}) k={k}: ||V^T V - I||_F  None={none_err:.3e}  Full={full_err:.3e}"
-        );
+        eprintln!("diag(1..{n}) k={k}: ||V^T V - I||_F  None={none_err:.3e}  Full={full_err:.3e}");
 
         assert!(
             full_err < 1e-11,
@@ -306,11 +298,11 @@ mod tests {
     }
 
     /// Zero-allocation regression for the one-pass hot path. Once the
-    /// workspace is built, a single `lanczos_into` call must allocate at
-    /// most a `k*k` scratch from `exp_neg_tk` plus eigensolver temps. In
-    /// particular, no allocation may scale with `n`: the bytes counted
-    /// between `n = 1_000` and `n = 10_000` (at the same `k`) must match
-    /// to within a small fudge.
+    /// workspace is built, a single `lanczos_into` call must not perform
+    /// any kernel-owned heap allocation, including the projected solve for
+    /// `exp(-T_k)e_1`. In particular, no allocation may scale with `n`:
+    /// the bytes counted between `n = 1_000` and `n = 10_000` (at the same
+    /// `k`) must match to within a small fudge.
     ///
     /// Under `cargo test --lib` the counting allocator sees every other
     /// test thread's allocations, so the absolute cap is generous. The
@@ -321,18 +313,20 @@ mod tests {
     fn hot_path_is_allocation_free_regardless_of_n() {
         use crate::lanczos::alloc_counter;
         use crate::lanczos::solvers::{LanczosWorkspace, lanczos_into};
-        use crate::lanczos::{Reorthogonalization, exp_neg_tk};
+        use crate::lanczos::{ProjectedTridiagonalWorkspace, Reorthogonalization};
 
         fn measure_one_call(n: usize, k: usize) -> u64 {
             let diag_vec: Vec<f64> = (1..=n).map(|i| i as f64).collect();
             let a = diagonal(&diag_vec);
             let b = sinusoidal_rhs(n);
             let mut ws = LanczosWorkspace::new(n, k);
+            let mut projected = ProjectedTridiagonalWorkspace::new(k, Par::Seq);
             let scratch = a.as_ref().apply_scratch(1, Par::Seq);
             let mut mem = MemBuffer::new(scratch);
 
             // Warmup call: exercises every lazy-initialized scratch path
-            // once (faer eigensolver inside `exp_neg_tk`, etc.) so the
+            // once (faer projected eigensolver inside
+            // `ProjectedTridiagonalWorkspace`, etc.) so the
             // measured second call sees only steady-state allocations.
             {
                 let stack = MemStack::new(&mut mem);
@@ -344,7 +338,7 @@ mod tests {
                     Par::Seq,
                     Reorthogonalization::None,
                     stack,
-                    exp_neg_tk,
+                    |alphas, betas, out| projected.exp_neg_tk(alphas, betas, out),
                 )
                 .expect("warmup lanczos_into failed");
             }
@@ -360,7 +354,7 @@ mod tests {
                     Par::Seq,
                     Reorthogonalization::None,
                     stack,
-                    exp_neg_tk,
+                    |alphas, betas, out| projected.exp_neg_tk(alphas, betas, out),
                 )
                 .expect("measured lanczos_into failed");
             }
@@ -376,11 +370,10 @@ mod tests {
              n=10000 delta={delta_large} bytes"
         );
 
-        // Absolute cap: `exp_neg_tk` allocates a `k*k` f64 matrix
-        // (20*20*8 = 3200 bytes) plus eigensolver scratch. 512 KB is
-        // deliberately lenient to absorb noise from any other test that
-        // happens to allocate during the measurement window.
-        let absolute_cap = 512 * 1024;
+        // With a dedicated projected-solve workspace, the measured call must
+        // not perform any kernel-owned heap allocation. Keep a 1 KiB cap to
+        // absorb incidental noise from the test harness when run isolated.
+        let absolute_cap = 1024;
         assert!(
             delta_small < absolute_cap,
             "n=1000 hot path allocated {delta_small} bytes, expected < {absolute_cap}"

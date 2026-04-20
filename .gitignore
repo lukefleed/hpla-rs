@@ -13,3 +13,5 @@ TeX
 *.mod
 .cargo/config.toml
 .venv
+AGENTS.md
+.codex

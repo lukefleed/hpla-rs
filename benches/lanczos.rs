@@ -23,7 +23,8 @@ use hpla_rs::eigen::{
     libeigen_lanczos_execute, libeigen_lanczos_setup, libeigen_lanczos_teardown,
 };
 use hpla_rs::lanczos::{
-    LanczosWorkspace, Reorthogonalization, estimate_spectral_radius, exp_neg_tk, lanczos_into,
+    LanczosWorkspace, ProjectedTridiagonalWorkspace, Reorthogonalization, estimate_spectral_radius,
+    lanczos_into,
 };
 use hpla_rs::petsc::{libpetsc_lanczos_execute, libpetsc_lanczos_setup, libpetsc_lanczos_teardown};
 use hpla_rs::psblas::{
@@ -114,6 +115,7 @@ fn bench_lanczos(c: &mut Criterion) {
         // allocation or zero-fill per iteration. Matches the SpMV
         // the PSBLAS `_setup`/`_execute` contract.
         let mut ws = LanczosWorkspace::new(raw.nrows, krylov_dim);
+        let mut projected = ProjectedTridiagonalWorkspace::new(krylov_dim, Par::Seq);
         let mut mem = MemBuffer::new(scratch_req);
         group.bench_with_input(BenchmarkId::new("faer_csc", "one_pass"), &(), |bench, _| {
             bench.iter(|| {
@@ -126,7 +128,7 @@ fn bench_lanczos(c: &mut Criterion) {
                     Par::Seq,
                     Reorthogonalization::None,
                     stack,
-                    exp_neg_tk,
+                    |alphas, betas, out| projected.exp_neg_tk(alphas, betas, out),
                 );
                 let _ = criterion::black_box(result);
             });
@@ -139,6 +141,7 @@ fn bench_lanczos(c: &mut Criterion) {
             SparseRowMat::try_new_from_triplets(raw.nrows, raw.ncols, &raw.triplets).unwrap();
         let scratch_req_csr = a_faer_csr.as_ref().apply_scratch(1, Par::Seq);
         let mut ws_csr = LanczosWorkspace::new(raw.nrows, krylov_dim);
+        let mut projected_csr = ProjectedTridiagonalWorkspace::new(krylov_dim, Par::Seq);
         let mut mem_csr = MemBuffer::new(scratch_req_csr);
         group.bench_with_input(BenchmarkId::new("faer_csr", "one_pass"), &(), |bench, _| {
             bench.iter(|| {
@@ -151,7 +154,7 @@ fn bench_lanczos(c: &mut Criterion) {
                     Par::Seq,
                     Reorthogonalization::None,
                     stack,
-                    exp_neg_tk,
+                    |alphas, betas, out| projected_csr.exp_neg_tk(alphas, betas, out),
                 );
                 let _ = criterion::black_box(result);
             });
@@ -284,9 +287,9 @@ fn bench_lanczos(c: &mut Criterion) {
 criterion_group!(
     name = benches;
     config = Criterion::default()
-        .sample_size(10)
-        .warm_up_time(std::time::Duration::from_secs(3))
-        .measurement_time(std::time::Duration::from_secs(10));
+        .sample_size(50)
+        .warm_up_time(std::time::Duration::from_secs(5))
+        .measurement_time(std::time::Duration::from_secs(100));
     targets = bench_lanczos
 );
 criterion_main!(benches);
