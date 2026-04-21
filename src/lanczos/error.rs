@@ -24,7 +24,9 @@ pub(crate) enum LanczosErrorKind {
     /// A requested dimension exceeds the capacity pre-allocated in a
     /// workspace. Distinct from `ParameterMismatch` because the workspace
     /// value is an upper bound, not an equality constraint.
-    #[error("capacity exceeded: `{param_name}` requested {requested}, but workspace was built with cap {cap}")]
+    #[error(
+        "capacity exceeded: `{param_name}` requested {requested}, but workspace was built with cap {cap}"
+    )]
     CapacityExceeded {
         param_name: String,
         cap: usize,
@@ -70,8 +72,9 @@ mod tests {
 
     #[test]
     fn test_solver_error_message() {
-        let error =
-            LanczosError(LanczosErrorKind::SolverError("custom solver failed".to_string()));
+        let error = LanczosError(LanczosErrorKind::SolverError(
+            "custom solver failed".to_string(),
+        ));
         assert_eq!(
             error.to_string(),
             "f(T_k) solver failed: custom solver failed"

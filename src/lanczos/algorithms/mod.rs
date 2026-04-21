@@ -77,12 +77,7 @@ pub(crate) fn lanczos_recurrence_step<O: LinOp<f64>>(
     matmul(w.rb_mut(), Accum::Add, v_prev, one_mat, -beta_prev, par);
 
     // alpha = <v_curr, w>  (4-way SIMD-unrolled dot product)
-    let alpha: f64 = inner_prod(
-        v_curr.col(0).transpose(),
-        Conj::No,
-        w.rb().col(0),
-        Conj::No,
-    );
+    let alpha: f64 = inner_prod(v_curr.col(0).transpose(), Conj::No, w.rb().col(0), Conj::No);
 
     // w -= alpha * v_curr  (SIMD via matvec_colmajor fast-path)
     matmul(w.rb_mut(), Accum::Add, v_curr, one_mat, -alpha, par);
@@ -141,11 +136,7 @@ impl<'a, 'ws, O: LinOp<f64>> LanczosIteration<'a, 'ws, O> {
             b.nrows(),
             "v_curr.nrows() must match b.nrows()"
         );
-        debug_assert_eq!(
-            work.nrows(),
-            b.nrows(),
-            "work.nrows() must match b.nrows()"
-        );
+        debug_assert_eq!(work.nrows(), b.nrows(), "work.nrows() must match b.nrows()");
 
         let zero_threshold = breakdown_tolerance();
         if b_norm <= zero_threshold {
@@ -217,10 +208,7 @@ impl<'a, 'ws, O: LinOp<f64>> LanczosIteration<'a, 'ws, O> {
             // Breakdown: the (possibly reorthogonalized) residual lies in
             // span(V_j) to working precision. Leave v_prev / v_curr / work
             // untouched and return zero beta so the caller terminates.
-            return Some(LanczosStep {
-                alpha,
-                beta: 0.0,
-            });
+            return Some(LanczosStep { alpha, beta: 0.0 });
         }
 
         let inv_beta = beta.recip();

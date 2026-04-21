@@ -8,11 +8,7 @@
 use super::{LanczosError, LanczosErrorKind, LanczosIteration, breakdown_tolerance};
 use crate::lanczos::solvers::TwoPassWorkspace;
 use faer::{
-    Accum, Par,
-    dyn_stack::MemStack,
-    linalg::matmul::matmul,
-    matrix_free::LinOp,
-    prelude::*,
+    Accum, Par, dyn_stack::MemStack, linalg::matmul::matmul, matrix_free::LinOp, prelude::*,
 };
 
 /// Runs up to `k` Lanczos steps and writes the scalar tridiagonal into

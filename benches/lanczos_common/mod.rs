@@ -39,10 +39,7 @@ pub fn lanczos_matrices() -> Vec<(&'static str, PathBuf)> {
 /// benchmark backends are guaranteed to match.
 ///
 /// Returns `(m, rho)` where `rho` is the estimated spectral radius.
-pub fn probe_krylov_dim(
-    a_faer: &SparseColMat<u32, f64>,
-    b_mat: MatRef<'_, f64>,
-) -> (usize, f64) {
+pub fn probe_krylov_dim(a_faer: &SparseColMat<u32, f64>, b_mat: MatRef<'_, f64>) -> (usize, f64) {
     let scratch_req = a_faer.as_ref().apply_scratch(1, Par::Seq);
 
     let rho = {

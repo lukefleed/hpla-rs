@@ -66,11 +66,7 @@ unsafe extern "C" {
     pub fn libpsblas_lanczos_execute(ctx: *mut PsblasLanczos);
 
     /// Copies the result vector into the caller-owned buffer `out`.
-    pub fn libpsblas_lanczos_get_y(
-        ctx: *mut PsblasLanczos,
-        out: *mut c_double,
-        len: i32,
-    );
+    pub fn libpsblas_lanczos_get_y(ctx: *mut PsblasLanczos, out: *mut c_double, len: i32);
 
     /// Frees all PSBLAS objects. Must use `psb_c_exit_ctxt` (not
     /// `psb_c_exit`) to avoid calling `MPI_Finalize`.
