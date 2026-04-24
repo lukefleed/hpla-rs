@@ -122,6 +122,7 @@ fn main() {
         .flag("-O3")
         .flag("-march=native")
         .flag("-mtune=native")
+        .flag("-ffast-math")
         .flag("-flto")
         .compile("petsc_wrapper");
 
@@ -133,6 +134,7 @@ fn main() {
         .flag("-O3")
         .flag("-march=native")
         .flag("-mtune=native")
+        .flag("-ffast-math")
         .flag("-flto")
         .compile("petsc_lanczos_wrapper");
 
@@ -144,6 +146,7 @@ fn main() {
         .flag("-O3")
         .flag("-march=native")
         .flag("-mtune=native")
+        .flag("-ffast-math")
         .flag("-flto")
         .compile("petsc_lanczos_two_pass_wrapper");
 
@@ -169,6 +172,7 @@ fn main() {
         .flag("-O3")
         .flag("-march=native")
         .flag("-mtune=native")
+        .flag("-ffast-math")
         .flag("-w") // Suppress all internal Eigen C++ warnings
         .flag("-flto")
         .compile("eigen_wrapper");
@@ -182,6 +186,7 @@ fn main() {
         .flag("-O3")
         .flag("-march=native")
         .flag("-mtune=native")
+        .flag("-ffast-math")
         .flag("-w") // Suppress all internal Eigen C++ warnings
         .flag("-flto")
         .compile("eigen_lanczos_two_pass_wrapper");
@@ -195,6 +200,7 @@ fn main() {
         .flag("-O3")
         .flag("-march=native")
         .flag("-mtune=native")
+        .flag("-ffast-math")
         .flag("-w")
         .flag("-flto")
         .compile("eigen_lanczos_wrapper");
@@ -235,6 +241,7 @@ fn main() {
         .flag("-O3")
         .flag("-march=native")
         .flag("-mtune=native")
+        .flag("-ffast-math")
         .flag("-flto")
         .compile("mkl_wrapper");
 
@@ -284,6 +291,7 @@ fn main() {
         .flag("-O3")
         .flag("-march=native")
         .flag("-mtune=native")
+        .flag("-ffast-math")
         .flag("-Wno-return-type-c-linkage") // Suppress PSBLAS third-party header warnings for std::complex C-linkage
         .flag("-Wno-unused-parameter")
         .flag("-flto")
@@ -305,6 +313,7 @@ fn main() {
         .flag("-O3")
         .flag("-march=native")
         .flag("-mtune=native")
+        .flag("-ffast-math")
         .flag("-ffat-lto-objects")
         .flag(&fortran_mod_flag)
         .flag("-Wno-unused-dummy-argument") // stub has no-op functions; remove when implemented
@@ -313,17 +322,18 @@ fn main() {
     // Two-pass Lanczos wrapper for f(A)b = exp(-A)b.
     // Temporarily disabled while ffi/lanczos/psblas_lanczos_two_pass.f90 is WIP.
     // cc::Build::new()
-    //     .file("ffi/lanczos/psblas_lanczos_two_pass.f90")
-    //     .include(&psblas_modules)
-    //     .compiler(&gfortran)
-    //     .flag("-O3")
-    //     .flag("-march=native")
-    //     .flag("-mtune=native")
-    //
-    //     .flag("-ffat-lto-objects")
-    //     .flag(&fortran_mod_flag)
-    //     .flag("-Wno-unused-dummy-argument") // stub has no-op functions; remove when implemented
-    //     .compile("psblas_lanczos_two_pass_wrapper");
+    cc::Build::new()
+        .file("ffi/lanczos/psblas_lanczos_two_pass.f90")
+        .file("ffi/lanczos/psblas_lanczos.cpp") // C++ wrapper is needed for the Rust FFI boundary, even if the Fortran code is not fully implemented yet
+        .include(&psblas_modules)
+        .compiler(&clangxx)
+        .flag("-O3")
+        .flag("-march=native")
+        .flag("-mtune=native")
+        .flag("-ffat-lto-objects")
+        .flag("-lgfortran")
+        .flag("-Wno-unused-dummy-argument") // stub has no-op functions; remove when implemented
+        .compile("psblas_lanczos_two_pass_wrapper");
 
     // Use link-arg instead of link-lib: rustc discards static archives when no
     // Rust FFI symbol references them directly, breaking our C++ wrapper deps.
