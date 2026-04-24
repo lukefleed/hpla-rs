@@ -122,7 +122,6 @@ fn main() {
         .flag("-O3")
         .flag("-march=native")
         .flag("-mtune=native")
-        .flag("-ffast-math")
         .flag("-flto")
         .compile("petsc_wrapper");
 
@@ -134,7 +133,6 @@ fn main() {
         .flag("-O3")
         .flag("-march=native")
         .flag("-mtune=native")
-        .flag("-ffast-math")
         .flag("-flto")
         .compile("petsc_lanczos_wrapper");
 
@@ -146,7 +144,6 @@ fn main() {
         .flag("-O3")
         .flag("-march=native")
         .flag("-mtune=native")
-        .flag("-ffast-math")
         .flag("-flto")
         .compile("petsc_lanczos_two_pass_wrapper");
 
@@ -172,7 +169,6 @@ fn main() {
         .flag("-O3")
         .flag("-march=native")
         .flag("-mtune=native")
-        .flag("-ffast-math")
         .flag("-w") // Suppress all internal Eigen C++ warnings
         .flag("-flto")
         .compile("eigen_wrapper");
@@ -186,7 +182,6 @@ fn main() {
         .flag("-O3")
         .flag("-march=native")
         .flag("-mtune=native")
-        .flag("-ffast-math")
         .flag("-w") // Suppress all internal Eigen C++ warnings
         .flag("-flto")
         .compile("eigen_lanczos_two_pass_wrapper");
@@ -200,7 +195,6 @@ fn main() {
         .flag("-O3")
         .flag("-march=native")
         .flag("-mtune=native")
-        .flag("-ffast-math")
         .flag("-w")
         .flag("-flto")
         .compile("eigen_lanczos_wrapper");
@@ -241,7 +235,6 @@ fn main() {
         .flag("-O3")
         .flag("-march=native")
         .flag("-mtune=native")
-        .flag("-ffast-math")
         .flag("-flto")
         .compile("mkl_wrapper");
 
@@ -291,7 +284,6 @@ fn main() {
         .flag("-O3")
         .flag("-march=native")
         .flag("-mtune=native")
-        .flag("-ffast-math")
         .flag("-Wno-return-type-c-linkage") // Suppress PSBLAS third-party header warnings for std::complex C-linkage
         .flag("-Wno-unused-parameter")
         .flag("-flto")
@@ -313,7 +305,6 @@ fn main() {
         .flag("-O3")
         .flag("-march=native")
         .flag("-mtune=native")
-        .flag("-ffast-math")
         .flag("-ffat-lto-objects")
         .flag(&fortran_mod_flag)
         .flag("-Wno-unused-dummy-argument") // stub has no-op functions; remove when implemented
@@ -328,7 +319,7 @@ fn main() {
     //     .flag("-O3")
     //     .flag("-march=native")
     //     .flag("-mtune=native")
-    //     .flag("-ffast-math")
+    //
     //     .flag("-ffat-lto-objects")
     //     .flag(&fortran_mod_flag)
     //     .flag("-Wno-unused-dummy-argument") // stub has no-op functions; remove when implemented
