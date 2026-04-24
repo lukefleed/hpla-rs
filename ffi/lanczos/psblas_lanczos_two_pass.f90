@@ -16,7 +16,8 @@
 module psblas_lanczos_two_pass
    use psb_base_mod
    use iso_c_binding
-   use psb_cbind_const_mod
+   use psb_objhandle_mod
+
    implicit none
    private
 
@@ -30,50 +31,53 @@ module psblas_lanczos_two_pass
 
 contains
 
-   ! Rust passes CSR arrays with 0-based indices (int32_t*, double*).
-   ! The SpMV wrapper already calls psb_c_set_index_base(0), and checks
-   ! MPI_Initialized to skip MPI_Init if already done, same pattern here.
-   ! Returns an opaque pointer that Rust stores as *mut c_void; c_null_ptr
-   ! signals the benchmark harness to skip this backend.
-   function libpsblas_lanczos_two_pass_setup(nrows, ncols, nnz, &
-      row_ptr, col_idx, values, b, krylov_dim) &
-      result(ctx) bind(C, name="libpsblas_lanczos_two_pass_setup")
+   function psb_c_dexpmv_twopass(ah,desc_ah,bh,xh,tol,maxit) bind(C) result(info)
+      ! C binding for the double precision version of the expmv_twopass routine
+      use iso_c_binding
+      use psb_cbind_const_mod
       implicit none
-      integer(psb_c_ipk_), value, intent(in) :: nrows, ncols, nnz, krylov_dim
-      integer(psb_c_ipk_), intent(in) :: row_ptr(*)
-      integer(psb_c_ipk_), intent(in) :: col_idx(*)
-      real(c_double), intent(in) :: values(*)
-      real(c_double), intent(in) :: b(*)
-      type(c_ptr) :: ctx
-      ctx = c_null_ptr
-   end function libpsblas_lanczos_two_pass_setup
+      type(psb_c_descriptor) :: desc_ah
+      type(psb_c_dvector) :: bh, xh
+      type(psb_c_dspmat) :: ah
+      real(c_double), value :: tol
+      integer(c_int), value :: maxit
+      integer(c_int) :: info
 
-   ! Criterion invokes this hundreds of times per benchmark sample.
-   ! Must be idempotent: reset all working vectors at the start of each
-   ! call so that repeated executions produce identical results.
-   subroutine libpsblas_lanczos_two_pass_execute(ctx) &
-      bind(C, name="libpsblas_lanczos_two_pass_execute")
-      implicit none
-      type(c_ptr), value, intent(in) :: ctx
-   end subroutine libpsblas_lanczos_two_pass_execute
+      ! Fortran local variables
+      type(psb_dspmat_type), pointer :: a
+      type(psb_desc_type), pointer :: desc_a
+      type(psb_d_vect_type), pointer :: b, x
+      real(psb_dpk_) :: tol_f
+      integer(psb_ipk_) :: maxit_f, info_f
 
-   ! out is a Rust-allocated buffer (length doubles). Copy the result
-   ! there; the Rust side compares it against the faer reference.
-   subroutine libpsblas_lanczos_two_pass_get_y(ctx, out, length) &
-      bind(C, name="libpsblas_lanczos_two_pass_get_y")
-      implicit none
-      type(c_ptr), value, intent(in) :: ctx
-      real(c_double), intent(inout) :: out(*)
-      integer(psb_c_ipk_), value, intent(in) :: length
-   end subroutine libpsblas_lanczos_two_pass_get_y
+      tol_f = tol
+      maxit_f = maxit
+      if (c_associated(desc_ah%item)) then
+         call c_f_pointer(desc_ah%item, desc_a)
+      else 
+         return
+      end if
+      if (c_associated(ah%item)) then
+         call c_f_pointer(ah%item, a)
+      else
+         return
+      end if
+      if (c_associated(bh%item)) then
+         call c_f_pointer(bh%item, b)
+      else
+         return
+      end if
+      if (c_associated(xh%item)) then
+         call c_f_pointer(xh%item, x)
+      else
+         return
+      end if
 
-   ! Use psb_c_exit_ctxt, not psb_c_exit: the latter calls MPI_Finalize
-   ! and Criterion runs multiple benchmarks in the same process.
-   subroutine libpsblas_lanczos_two_pass_teardown(ctx) &
-      bind(C, name="libpsblas_lanczos_two_pass_teardown")
-      implicit none
-      type(c_ptr), value, intent(in) :: ctx
-   end subroutine libpsblas_lanczos_two_pass_teardown
+      call psb_dexpmv_twopass(a, desc_a, b, x, tol_f, maxit_f, info_f)
+
+      info = info_f
+
+   end function psb_c_dexpmv_twopass
 
    subroutine psb_dexpmv_twopass(a,desc_a,b,x,tol,maxit,info,itrace)
       ! Implementation of the two-pass Lanczos algorithm for computing
