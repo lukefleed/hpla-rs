@@ -48,7 +48,7 @@ unsafe extern "C" {
     /// Assembles the sparse matrix and starting vector into PSBLAS structures.
     /// `krylov_dim` is the number of Lanczos iterations (determined by the
     /// Rust side via the Saad 1992 a posteriori error estimate).
-    pub fn libpsblas_lanczos_setup(
+    pub fn libpsblas_csr_lanczos_setup(
         nrows: i32,
         ncols: i32,
         nnz: i32,
@@ -63,14 +63,30 @@ unsafe extern "C" {
     /// memory, solves `g = exp(-T_m)*e_1`, and accumulates
     /// `y = ||b|| * V_m * g`. Must be idempotent (Criterion calls this
     /// many times per benchmark).
-    pub fn libpsblas_lanczos_execute(ctx: *mut PsblasLanczos);
+    pub fn libpsblas_csr_lanczos_execute(ctx: *mut PsblasLanczos);
 
     /// Copies the result vector into the caller-owned buffer `out`.
-    pub fn libpsblas_lanczos_get_y(ctx: *mut PsblasLanczos, out: *mut c_double, len: i32);
+    pub fn libpsblas_csr_lanczos_get_y(ctx: *mut PsblasLanczos, out: *mut c_double, len: i32);
 
     /// Frees all PSBLAS objects. Must use `psb_c_exit_ctxt` (not
     /// `psb_c_exit`) to avoid calling `MPI_Finalize`.
-    pub fn libpsblas_lanczos_teardown(ctx: *mut PsblasLanczos);
+    pub fn libpsblas_csr_lanczos_teardown(ctx: *mut PsblasLanczos);
+
+    /// CSC variant: inserts from CSC arrays and assembles internally as CSC.
+    pub fn libpsblas_csc_lanczos_setup(
+        nrows: i32,
+        ncols: i32,
+        nnz: i32,
+        col_ptr: *const i32,
+        row_idx: *const i32,
+        values: *const c_double,
+        b: *const c_double,
+        krylov_dim: i32,
+    ) -> *mut PsblasLanczos;
+
+    pub fn libpsblas_csc_lanczos_execute(ctx: *mut PsblasLanczos);
+    pub fn libpsblas_csc_lanczos_get_y(ctx: *mut PsblasLanczos, out: *mut c_double, len: i32);
+    pub fn libpsblas_csc_lanczos_teardown(ctx: *mut PsblasLanczos);
 }
 
 /// Opaque context for the PSBLAS two-pass Lanczos kernel (`f(A)b`).
@@ -83,7 +99,7 @@ unsafe extern "C" {
     /// Assembles the sparse matrix and starting vector into PSBLAS structures.
     /// `krylov_dim` is the number of Lanczos iterations (determined by the
     /// Rust side via the Saad 1992 a posteriori error estimate).
-    pub fn libpsblas_lanczos_two_pass_setup(
+    pub fn libpsblas_csr_lanczos_two_pass_setup(
         nrows: i32,
         ncols: i32,
         nnz: i32,
@@ -96,10 +112,10 @@ unsafe extern "C" {
 
     /// Runs the full two-pass Lanczos computing `exp(-A)b`. Must be idempotent
     /// (Criterion calls this many times per benchmark).
-    pub fn libpsblas_lanczos_two_pass_execute(ctx: *mut PsblasLanczosTwoPass);
+    pub fn libpsblas_csr_lanczos_two_pass_execute(ctx: *mut PsblasLanczosTwoPass);
 
     /// Copies the result vector into the caller-owned buffer `out`.
-    pub fn libpsblas_lanczos_two_pass_get_y(
+    pub fn libpsblas_csr_lanczos_two_pass_get_y(
         ctx: *mut PsblasLanczosTwoPass,
         out: *mut c_double,
         len: i32,
@@ -107,11 +123,9 @@ unsafe extern "C" {
 
     /// Frees all PSBLAS objects. Must use `psb_c_exit_ctxt` (not
     /// `psb_c_exit`) to avoid calling `MPI_Finalize`.
-    pub fn libpsblas_lanczos_two_pass_teardown(ctx: *mut PsblasLanczosTwoPass);
+    pub fn libpsblas_csr_lanczos_two_pass_teardown(ctx: *mut PsblasLanczosTwoPass);
 
-    /// CSC variant of the two-pass setup. Inserts from CSC arrays and
-    /// assembles internally as CSC. The execute/get_y/teardown symbols
-    /// are shared with the CSR variant (same opaque context).
+    /// CSC variant: inserts from CSC arrays and assembles internally as CSC.
     pub fn libpsblas_csc_lanczos_two_pass_setup(
         nrows: i32,
         ncols: i32,
@@ -122,4 +136,12 @@ unsafe extern "C" {
         b: *const c_double,
         krylov_dim: i32,
     ) -> *mut PsblasLanczosTwoPass;
+
+    pub fn libpsblas_csc_lanczos_two_pass_execute(ctx: *mut PsblasLanczosTwoPass);
+    pub fn libpsblas_csc_lanczos_two_pass_get_y(
+        ctx: *mut PsblasLanczosTwoPass,
+        out: *mut c_double,
+        len: i32,
+    );
+    pub fn libpsblas_csc_lanczos_two_pass_teardown(ctx: *mut PsblasLanczosTwoPass);
 }

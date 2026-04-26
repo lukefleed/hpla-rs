@@ -276,8 +276,10 @@ fn test_lanczos_two_pass_backend_equivalence() -> anyhow::Result<()> {
         lanczos_two_pass,
     };
     use crate::psblas::{
-        libpsblas_lanczos_two_pass_execute, libpsblas_lanczos_two_pass_get_y,
-        libpsblas_lanczos_two_pass_setup, libpsblas_lanczos_two_pass_teardown,
+        libpsblas_csc_lanczos_two_pass_execute, libpsblas_csc_lanczos_two_pass_get_y,
+        libpsblas_csc_lanczos_two_pass_setup, libpsblas_csc_lanczos_two_pass_teardown,
+        libpsblas_csr_lanczos_two_pass_execute, libpsblas_csr_lanczos_two_pass_get_y,
+        libpsblas_csr_lanczos_two_pass_setup, libpsblas_csr_lanczos_two_pass_teardown,
     };
 
     let tol = 1e-8;
@@ -445,11 +447,11 @@ fn test_lanczos_two_pass_backend_equivalence() -> anyhow::Result<()> {
             }
         }
 
-        // --- PSBLAS two-pass ---
+        // --- PSBLAS CSR two-pass ---
         {
             let mut y_buf = vec![0.0f64; raw.nrows];
             unsafe {
-                let ctx = libpsblas_lanczos_two_pass_setup(
+                let ctx = libpsblas_csr_lanczos_two_pass_setup(
                     raw.nrows as i32,
                     raw.ncols as i32,
                     raw.nnz as i32,
@@ -460,17 +462,48 @@ fn test_lanczos_two_pass_backend_equivalence() -> anyhow::Result<()> {
                     krylov_dim as i32,
                 );
                 if ctx.is_null() {
-                    eprintln!("  psblas/two_pass:  skipped (stub returned null)");
+                    eprintln!("  psblas_csr/two_pass:  skipped (stub returned null)");
                 } else {
-                    libpsblas_lanczos_two_pass_execute(ctx);
-                    libpsblas_lanczos_two_pass_get_y(ctx, y_buf.as_mut_ptr(), raw.nrows as i32);
-                    libpsblas_lanczos_two_pass_teardown(ctx);
+                    libpsblas_csr_lanczos_two_pass_execute(ctx);
+                    libpsblas_csr_lanczos_two_pass_get_y(ctx, y_buf.as_mut_ptr(), raw.nrows as i32);
+                    libpsblas_csr_lanczos_two_pass_teardown(ctx);
 
                     let err = relative_l2_error(&y_buf, &faer_ref);
-                    eprintln!("  psblas/two_pass:  rel L2 = {err:.2e}");
+                    eprintln!("  psblas_csr/two_pass:  rel L2 = {err:.2e}");
                     assert!(
                         err < tol,
-                        "{name}: psblas/two_pass diverged: rel L2 = {err:.2e}"
+                        "{name}: psblas_csr/two_pass diverged: rel L2 = {err:.2e}"
+                    );
+                }
+            }
+        }
+
+        // --- PSBLAS CSC two-pass ---
+        {
+            let mut y_buf = vec![0.0f64; raw.nrows];
+            unsafe {
+                let ctx = libpsblas_csc_lanczos_two_pass_setup(
+                    raw.nrows as i32,
+                    raw.ncols as i32,
+                    raw.nnz as i32,
+                    raw.col_ptr.as_ptr(),
+                    raw.row_idx.as_ptr(),
+                    raw.csc_values.as_ptr(),
+                    b_vec.as_ptr(),
+                    krylov_dim as i32,
+                );
+                if ctx.is_null() {
+                    eprintln!("  psblas_csc/two_pass:  skipped (stub returned null)");
+                } else {
+                    libpsblas_csc_lanczos_two_pass_execute(ctx);
+                    libpsblas_csc_lanczos_two_pass_get_y(ctx, y_buf.as_mut_ptr(), raw.nrows as i32);
+                    libpsblas_csc_lanczos_two_pass_teardown(ctx);
+
+                    let err = relative_l2_error(&y_buf, &faer_ref);
+                    eprintln!("  psblas_csc/two_pass:  rel L2 = {err:.2e}");
+                    assert!(
+                        err < tol,
+                        "{name}: psblas_csc/two_pass diverged: rel L2 = {err:.2e}"
                     );
                 }
             }
@@ -506,8 +539,9 @@ fn test_lanczos_backend_equivalence() -> anyhow::Result<()> {
         estimate_spectral_radius, lanczos,
     };
     use crate::psblas::{
-        libpsblas_lanczos_execute, libpsblas_lanczos_get_y, libpsblas_lanczos_setup,
-        libpsblas_lanczos_teardown,
+        libpsblas_csc_lanczos_execute, libpsblas_csc_lanczos_get_y, libpsblas_csc_lanczos_setup,
+        libpsblas_csc_lanczos_teardown, libpsblas_csr_lanczos_execute,
+        libpsblas_csr_lanczos_get_y, libpsblas_csr_lanczos_setup, libpsblas_csr_lanczos_teardown,
     };
 
     let tol = 1e-8;
@@ -677,11 +711,11 @@ fn test_lanczos_backend_equivalence() -> anyhow::Result<()> {
             }
         }
 
-        // --- PSBLAS one-pass ---
+        // --- PSBLAS CSR one-pass ---
         {
             let mut y_buf = vec![0.0f64; raw.nrows];
             unsafe {
-                let ctx = libpsblas_lanczos_setup(
+                let ctx = libpsblas_csr_lanczos_setup(
                     raw.nrows as i32,
                     raw.ncols as i32,
                     raw.nnz as i32,
@@ -692,17 +726,48 @@ fn test_lanczos_backend_equivalence() -> anyhow::Result<()> {
                     krylov_dim as i32,
                 );
                 if ctx.is_null() {
-                    eprintln!("  psblas/one_pass:  skipped (stub returned null)");
+                    eprintln!("  psblas_csr/one_pass:  skipped (stub returned null)");
                 } else {
-                    libpsblas_lanczos_execute(ctx);
-                    libpsblas_lanczos_get_y(ctx, y_buf.as_mut_ptr(), raw.nrows as i32);
-                    libpsblas_lanczos_teardown(ctx);
+                    libpsblas_csr_lanczos_execute(ctx);
+                    libpsblas_csr_lanczos_get_y(ctx, y_buf.as_mut_ptr(), raw.nrows as i32);
+                    libpsblas_csr_lanczos_teardown(ctx);
 
                     let err = relative_l2_error(&y_buf, &faer_ref);
-                    eprintln!("  psblas/one_pass:  rel L2 = {err:.2e}");
+                    eprintln!("  psblas_csr/one_pass:  rel L2 = {err:.2e}");
                     assert!(
                         err < tol,
-                        "{name}: psblas/one_pass diverged: rel L2 = {err:.2e}"
+                        "{name}: psblas_csr/one_pass diverged: rel L2 = {err:.2e}"
+                    );
+                }
+            }
+        }
+
+        // --- PSBLAS CSC one-pass ---
+        {
+            let mut y_buf = vec![0.0f64; raw.nrows];
+            unsafe {
+                let ctx = libpsblas_csc_lanczos_setup(
+                    raw.nrows as i32,
+                    raw.ncols as i32,
+                    raw.nnz as i32,
+                    raw.col_ptr.as_ptr(),
+                    raw.row_idx.as_ptr(),
+                    raw.csc_values.as_ptr(),
+                    b_vec.as_ptr(),
+                    krylov_dim as i32,
+                );
+                if ctx.is_null() {
+                    eprintln!("  psblas_csc/one_pass:  skipped (stub returned null)");
+                } else {
+                    libpsblas_csc_lanczos_execute(ctx);
+                    libpsblas_csc_lanczos_get_y(ctx, y_buf.as_mut_ptr(), raw.nrows as i32);
+                    libpsblas_csc_lanczos_teardown(ctx);
+
+                    let err = relative_l2_error(&y_buf, &faer_ref);
+                    eprintln!("  psblas_csc/one_pass:  rel L2 = {err:.2e}");
+                    assert!(
+                        err < tol,
+                        "{name}: psblas_csc/one_pass diverged: rel L2 = {err:.2e}"
                     );
                 }
             }

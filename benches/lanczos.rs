@@ -28,7 +28,8 @@ use hpla_rs::lanczos::{
 };
 use hpla_rs::petsc::{libpetsc_lanczos_execute, libpetsc_lanczos_setup, libpetsc_lanczos_teardown};
 use hpla_rs::psblas::{
-    libpsblas_lanczos_execute, libpsblas_lanczos_setup, libpsblas_lanczos_teardown,
+    libpsblas_csc_lanczos_execute, libpsblas_csc_lanczos_setup, libpsblas_csc_lanczos_teardown,
+    libpsblas_csr_lanczos_execute, libpsblas_csr_lanczos_setup, libpsblas_csr_lanczos_teardown,
 };
 use hpla_rs::{load_mtx_raw, scale_values};
 
@@ -223,10 +224,10 @@ fn bench_lanczos(c: &mut Criterion) {
         }
 
         // --------------------------------------------------------
-        // PSBLAS (one-pass Lanczos for exp(-A)b)
+        // PSBLAS CSR (one-pass Lanczos for exp(-A)b)
         // --------------------------------------------------------
         unsafe {
-            let ctx = libpsblas_lanczos_setup(
+            let ctx = libpsblas_csr_lanczos_setup(
                 raw.nrows as i32,
                 raw.ncols as i32,
                 raw.nnz as i32,
@@ -238,14 +239,49 @@ fn bench_lanczos(c: &mut Criterion) {
             );
 
             if !ctx.is_null() {
-                group.bench_with_input(BenchmarkId::new("psblas", "one_pass"), &(), |bench, _| {
-                    bench.iter(|| {
-                        libpsblas_lanczos_execute(ctx);
-                        criterion::black_box(ctx);
-                    });
-                });
+                group.bench_with_input(
+                    BenchmarkId::new("psblas_csr", "one_pass"),
+                    &(),
+                    |bench, _| {
+                        bench.iter(|| {
+                            libpsblas_csr_lanczos_execute(ctx);
+                            criterion::black_box(ctx);
+                        });
+                    },
+                );
 
-                libpsblas_lanczos_teardown(ctx);
+                libpsblas_csr_lanczos_teardown(ctx);
+            }
+        }
+
+        // --------------------------------------------------------
+        // PSBLAS CSC (one-pass Lanczos for exp(-A)b)
+        // --------------------------------------------------------
+        unsafe {
+            let ctx = libpsblas_csc_lanczos_setup(
+                raw.nrows as i32,
+                raw.ncols as i32,
+                raw.nnz as i32,
+                raw.col_ptr.as_ptr(),
+                raw.row_idx.as_ptr(),
+                raw.csc_values.as_ptr(),
+                b_vec.as_ptr(),
+                krylov_dim as i32,
+            );
+
+            if !ctx.is_null() {
+                group.bench_with_input(
+                    BenchmarkId::new("psblas_csc", "one_pass"),
+                    &(),
+                    |bench, _| {
+                        bench.iter(|| {
+                            libpsblas_csc_lanczos_execute(ctx);
+                            criterion::black_box(ctx);
+                        });
+                    },
+                );
+
+                libpsblas_csc_lanczos_teardown(ctx);
             }
         }
 

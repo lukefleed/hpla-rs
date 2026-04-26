@@ -65,18 +65,19 @@ LANCZOS_TWO_PASS_CONFIG_ORDER = [
     'eigen_csr/two_pass', 'eigen_csc/two_pass',
     'eigen/two_pass',
     'petsc_csr/two_pass',
-    'psblas/two_pass',
+    'psblas_csr/two_pass', 'psblas_csc/two_pass',
 ]
 
 LANCZOS_TWO_PASS_BACKEND_COLORS = {
-    'faer_csc/two_pass':   '#0072B2',  # blue
-    'faer_csr/two_pass':   '#4477AA',  # steel blue
-    'faer/two_pass':       '#0072B2',  # blue (legacy naming)
-    'eigen_csr/two_pass':  '#E69F00',  # orange
-    'eigen_csc/two_pass':  '#CC79A7',  # pink
-    'eigen/two_pass':      '#E69F00',  # orange (legacy naming)
-    'petsc_csr/two_pass':  '#009E73',  # green
-    'psblas/two_pass':     '#D55E00',  # vermilion
+    'faer_csc/two_pass':    '#0072B2',  # blue
+    'faer_csr/two_pass':    '#4477AA',  # steel blue
+    'faer/two_pass':        '#0072B2',  # blue
+    'eigen_csr/two_pass':   '#E69F00',  # orange
+    'eigen_csc/two_pass':   '#CC79A7',  # pink
+    'eigen/two_pass':       '#E69F00',  # orange
+    'petsc_csr/two_pass':   '#009E73',  # green
+    'psblas_csr/two_pass':  '#D55E00',  # vermilion
+    'psblas_csc/two_pass':  '#E6550D',  # dark vermilion
 }
 
 # ---------------------------------------------------------------------------
@@ -89,18 +90,19 @@ LANCZOS_ONE_PASS_CONFIG_ORDER = [
     'eigen_csr/one_pass', 'eigen_csc/one_pass',
     'eigen/one_pass',
     'petsc_csr/one_pass',
-    'psblas/one_pass',
+    'psblas_csr/one_pass', 'psblas_csc/one_pass',
 ]
 
 LANCZOS_ONE_PASS_BACKEND_COLORS = {
-    'faer_csc/one_pass':   '#0072B2',  # blue
-    'faer_csr/one_pass':   '#4477AA',  # steel blue
-    'faer/one_pass':       '#0072B2',  # blue (legacy naming)
-    'eigen_csr/one_pass':  '#E69F00',  # orange
-    'eigen_csc/one_pass':  '#CC79A7',  # pink
-    'eigen/one_pass':      '#E69F00',  # orange (legacy naming)
-    'petsc_csr/one_pass':  '#009E73',  # green
-    'psblas/one_pass':     '#D55E00',  # vermilion
+    'faer_csc/one_pass':    '#0072B2',  # blue
+    'faer_csr/one_pass':    '#4477AA',  # steel blue
+    'faer/one_pass':        '#0072B2',  # blue
+    'eigen_csr/one_pass':   '#E69F00',  # orange
+    'eigen_csc/one_pass':   '#CC79A7',  # pink
+    'eigen/one_pass':       '#E69F00',  # orange
+    'petsc_csr/one_pass':   '#009E73',  # green
+    'psblas_csr/one_pass':  '#D55E00',  # vermilion
+    'psblas_csc/one_pass':  '#E6550D',  # dark vermilion
 }
 
 
@@ -317,7 +319,7 @@ def plot_roofline(df, matrix_dims, hw_config, output_dir, config_order,
     ax.set_yscale('log')
     ax.set_xlabel('Arithmetic Intensity (FLOP/byte)', fontsize=12)
     ax.set_ylabel('Performance (GFLOP/s)', fontsize=12)
-    ax.set_title('SpMV Roofline -- Single Core (STREAM Triad Ceiling)',
+    ax.set_title('SpMV Roofline, Single Core (STREAM Triad Ceiling)',
                  fontsize=14, pad=15)
 
     backend_handles = []
@@ -525,8 +527,6 @@ def run_lanczos_two_pass(criterion_dir, matrices_dir, hw_config_path):
         config_order=LANCZOS_TWO_PASS_CONFIG_ORDER,
         backend_colors=LANCZOS_TWO_PASS_BACKEND_COLORS,
         title_prefix="Two-Pass Lanczos Performance on",
-        # No bandwidth ceiling for Lanczos bar charts; the arithmetic
-        # intensity model differs from SpMV and is not yet implemented.
         matrix_dims=None,
         hw_config=None,
     )
@@ -537,6 +537,170 @@ def run_lanczos_two_pass(criterion_dir, matrices_dir, hw_config_path):
     # a proper compulsory-traffic model requires accounting for the
     # rolling three-vector access pattern and the tridiagonal solve.
     # Skipped until the traffic model is worked out.
+
+
+def parse_lanczos_config(config):
+    """Parse a Lanczos configuration string into (library, format, kernel).
+
+    Returns ``None`` for aliases that lack an explicit format
+    suffix (e.g. ``faer/two_pass``, ``eigen/one_pass``).
+    """
+    if '/' not in config:
+        return None
+    backend, kernel = config.split('/', 1)
+    if '_' not in backend:
+        return None
+    library, fmt = backend.rsplit('_', 1)
+    if fmt not in ('csr', 'csc'):
+        return None
+    return library, fmt, kernel
+
+
+def lanczos_slice(df, kernel, fmt):
+    """Pivot ``Matrix x Library`` for one ``(kernel, fmt)`` slice.
+
+    Returns ``(configs, libraries, matrices, throughput)``. Matrices
+    missing data for any library in the slice are dropped, so all four
+    return values are aligned and free of NaNs.
+    """
+    pairs = []
+    for cfg in sorted(df['Configuration'].unique()):
+        parsed = parse_lanczos_config(cfg)
+        if parsed is None:
+            continue
+        library, cfg_fmt, cfg_kernel = parsed
+        if cfg_fmt == fmt and cfg_kernel == kernel:
+            pairs.append((cfg, library))
+
+    if not pairs:
+        return [], [], [], np.empty((0, 0))
+
+    configs = [c for c, _ in pairs]
+    libraries = [lib for _, lib in pairs]
+
+    sub = df[df['Configuration'].isin(configs)]
+    pivot = (sub
+             .pivot(index='Matrix', columns='Configuration',
+                    values='Throughput (GFLOP/s)')
+             .reindex(columns=configs)
+             .dropna())
+
+    if pivot.empty:
+        return configs, libraries, [], np.empty((0, len(libraries)))
+
+    matrices = list(pivot.index)
+    return configs, libraries, matrices, pivot.values
+
+
+def plot_perfprof(configs, libraries, throughput, backend_colors, title,
+                  save_path, thmax=None):
+    """Render a Dolan-Moré performance-profile PNG.
+
+    For each library, the curve is the empirical CDF of the
+    performance ratio
+
+        r[i, lib] = best_i / throughput[i, lib],
+
+    where ``best_i = max_lib throughput[i, lib]`` is the fastest library
+    on matrix ``i``.  The curve is
+
+        rho_lib(theta) = #{i : r[i, lib] <= theta} / n_matrices,
+
+    drawn as a steps-post line plus circular markers at every distinct
+    ``theta``.  The leftmost marker (at the smallest ``theta``) makes
+    the win rate at ``theta = 1`` always visible, even when a library
+    dominates the slice.
+    """
+    n_matrices, n_libraries = throughput.shape
+    if n_matrices == 0 or n_libraries == 0:
+        print(f"[perfprof] No data for {title}")
+        return
+
+    best = throughput.max(axis=1)
+    ratios = best[:, None] / throughput
+
+    if thmax is None:
+        thmax = float(np.nanmax(ratios)) * 1.08
+    thmax = max(thmax, 1.05)
+
+    fig, ax = plt.subplots(figsize=(8, 5.5))
+
+    for j, (cfg, lib) in enumerate(zip(configs, libraries)):
+        col = ratios[:, j]
+        col = col[~np.isnan(col)]
+        if col.size == 0:
+            continue
+        unique_theta, counts = np.unique(col, return_counts=True)
+        cum_prob = np.cumsum(counts) / col.size
+        x = np.concatenate([[1.0], unique_theta, [thmax]])
+        y = np.concatenate([[0.0], cum_prob, [cum_prob[-1]]])
+        color = backend_colors.get(cfg, '#999999')
+        ax.plot(x, y, drawstyle='steps-post', label=lib,
+                color=color, linewidth=2.0, zorder=5)
+        ax.scatter(unique_theta, cum_prob, color=color, s=55,
+                   edgecolors='white', linewidths=1.0, zorder=10)
+
+    ax.set_xscale('log')
+    ax.set_xlim(1.0, thmax)
+    ax.set_ylim(-0.02, 1.04)
+    ax.xaxis.set_major_formatter(plt.ScalarFormatter())
+    ax.xaxis.set_minor_formatter(plt.ScalarFormatter())
+    ax.ticklabel_format(axis='x', style='plain')
+    ax.set_xlabel(r'Performance ratio $\theta$ = best / throughput',
+                  fontsize=12)
+    ax.set_ylabel(r'Fraction of matrices $\rho(\theta)$', fontsize=12)
+    ax.set_title(title, fontsize=14, pad=12)
+    ax.grid(True, which='both', linestyle='--', alpha=0.4)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.legend(loc='lower right', fontsize=10,
+              title=f'Library (n={n_matrices})', title_fontsize=11)
+
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300, bbox_inches='tight', transparent=False)
+    plt.close()
+    print(f"[perfprof] Saved -> {save_path}")
+
+
+def run_perfprof(criterion_dir):
+    """Generate the four Lanczos throughput-exceedance plots."""
+    output_dir = Path(__file__).parent / "perfprof"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    print("Parsing Criterion JSON results (perfprof)...")
+    df_one = load_data(criterion_dir, "lanczos_", derive_nnz=lambda e: e,
+                       exclude_prefix="lanczos_two_pass_")
+    df_two = load_data(criterion_dir, "lanczos_two_pass_", derive_nnz=lambda e: e)
+
+    if df_one.empty and df_two.empty:
+        print("No Lanczos data found. Run "
+              "'cargo bench --bench lanczos' and "
+              "'cargo bench --bench lanczos_two_pass' first.")
+        sys.exit(1)
+
+    plots = [
+        (df_one, 'one_pass', 'csr', LANCZOS_ONE_PASS_BACKEND_COLORS,
+         'One-Pass Lanczos, CSR'),
+        (df_one, 'one_pass', 'csc', LANCZOS_ONE_PASS_BACKEND_COLORS,
+         'One-Pass Lanczos, CSC'),
+        (df_two, 'two_pass', 'csr', LANCZOS_TWO_PASS_BACKEND_COLORS,
+         'Two-Pass Lanczos, CSR'),
+        (df_two, 'two_pass', 'csc', LANCZOS_TWO_PASS_BACKEND_COLORS,
+         'Two-Pass Lanczos, CSC'),
+    ]
+
+    for df, kernel, fmt, colors, label in plots:
+        if df.empty:
+            print(f"[skip] {kernel}/{fmt}: no benchmark data")
+            continue
+        configs, libraries, matrices, throughput = lanczos_slice(df, kernel, fmt)
+        if not matrices:
+            print(f"[skip] {kernel}/{fmt}: no aligned data")
+            continue
+
+        pp_path = output_dir / f"perfprof_{kernel}_{fmt}.png"
+        plot_perfprof(configs, libraries, throughput, colors,
+                      f'Performance Profile, {label}', pp_path)
 
 
 def run_lanczos_one_pass(criterion_dir, matrices_dir, hw_config_path):
@@ -559,8 +723,6 @@ def run_lanczos_one_pass(criterion_dir, matrices_dir, hw_config_path):
         config_order=LANCZOS_ONE_PASS_CONFIG_ORDER,
         backend_colors=LANCZOS_ONE_PASS_BACKEND_COLORS,
         title_prefix="One-Pass Lanczos Performance on",
-        # No bandwidth ceiling for Lanczos bar charts; the arithmetic
-        # intensity model differs from SpMV and is not yet implemented.
         matrix_dims=None,
         hw_config=None,
     )
@@ -610,7 +772,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         'bench', nargs='?', default='spmv',
-        choices=['spmv', 'lanczos', 'lanczos_two_pass'],
+        choices=['spmv', 'lanczos', 'lanczos_two_pass', 'perfprof'],
         help="Benchmark type to plot (default: spmv).",
     )
     args = parser.parse_args()
@@ -625,3 +787,5 @@ if __name__ == "__main__":
         run_lanczos_one_pass(criterion_dir, matrices_dir, hw_config_path)
     elif args.bench == 'lanczos_two_pass':
         run_lanczos_two_pass(criterion_dir, matrices_dir, hw_config_path)
+    elif args.bench == 'perfprof':
+        run_perfprof(criterion_dir)

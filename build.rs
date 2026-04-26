@@ -347,7 +347,7 @@ fn main() {
         .flag("-Wno-return-type-c-linkage")
         .flag("-Wno-unused-parameter")
         .flag("-flto")
-        .compile("psblas_lanczos_two_pass_wrapper");
+        .compile("psblas_lanczos_cpp");
 
     // Use link-arg instead of link-lib: rustc discards static archives when no
     // Rust FFI symbol references them directly, breaking our C++ wrapper deps.

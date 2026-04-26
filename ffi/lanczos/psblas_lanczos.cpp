@@ -46,7 +46,7 @@ int psb_c_dexpmv_onepass(psb_c_dspmat *ah, psb_c_descriptor *desc_ah,
                          double tol, int maxit);
 
 psblas_context_t *
-libpsblas_lanczos_two_pass_setup(int32_t nrows, int32_t ncols, int32_t nnz,
+libpsblas_csr_lanczos_two_pass_setup(int32_t nrows, int32_t ncols, int32_t nnz,
                      const int32_t *row_ptr,   // CSR row pointers (0-based)
                      const int32_t *col_idx,   // CSR column indices (0-based)
                      const double *values,     // CSR values
@@ -171,7 +171,7 @@ libpsblas_lanczos_two_pass_setup(int32_t nrows, int32_t ncols, int32_t nnz,
   return ctx;
 }
 
-void libpsblas_lanczos_two_pass_execute(psblas_context_t *ctx) {
+void libpsblas_csr_lanczos_two_pass_execute(psblas_context_t *ctx) {
   // tol=0.0 disables early-exit convergence: the kernel always runs exactly
   // krylov_dim iterations, matching the bench contract for Faer and Eigen.
   // The Fortran loop is `do i = 1, maxit-1`, so maxit = krylov_dim+1 yields
@@ -184,7 +184,7 @@ void libpsblas_lanczos_two_pass_execute(psblas_context_t *ctx) {
   }
 }
 
-void libpsblas_lanczos_two_pass_get_y(psblas_context_t *ctx, double *out, int32_t len) {
+void libpsblas_csr_lanczos_two_pass_get_y(psblas_context_t *ctx, double *out, int32_t len) {
     // xh holds the result of exp(-A)b written by the Fortran kernel.
     // psb_c_dvect_f_get_pnt returns a raw pointer to the internal Fortran
     // vector storage, avoiding an extra allocation + copy.
@@ -194,7 +194,7 @@ void libpsblas_lanczos_two_pass_get_y(psblas_context_t *ctx, double *out, int32_
     for (int32_t i = 0; i < n; i++) out[i] = xptr[i];
 }
 
-void libpsblas_lanczos_two_pass_teardown(psblas_context_t *ctx) {
+void libpsblas_csr_lanczos_two_pass_teardown(psblas_context_t *ctx) {
   if (!ctx)
     return;
 
@@ -323,19 +323,31 @@ libpsblas_csc_lanczos_two_pass_setup(int32_t nrows, int32_t ncols, int32_t nnz,
   return ctx;
 }
 
+void libpsblas_csc_lanczos_two_pass_execute(psblas_context_t *ctx) {
+  libpsblas_csr_lanczos_two_pass_execute(ctx);
+}
+
+void libpsblas_csc_lanczos_two_pass_get_y(psblas_context_t *ctx, double *out, int32_t len) {
+  libpsblas_csr_lanczos_two_pass_get_y(ctx, out, len);
+}
+
+void libpsblas_csc_lanczos_two_pass_teardown(psblas_context_t *ctx) {
+  libpsblas_csr_lanczos_two_pass_teardown(ctx);
+}
+
 psblas_context_t *
-libpsblas_lanczos_setup(int32_t nrows, int32_t ncols, int32_t nnz,
+libpsblas_csr_lanczos_setup(int32_t nrows, int32_t ncols, int32_t nnz,
                         const int32_t *row_ptr,
                         const int32_t *col_idx,
                         const double *values,
                         const double *b,
                         int32_t krylov_dim) {
-  return libpsblas_lanczos_two_pass_setup(nrows, ncols, nnz,
+  return libpsblas_csr_lanczos_two_pass_setup(nrows, ncols, nnz,
                                           row_ptr, col_idx, values,
                                           b, krylov_dim);
 }
 
-void libpsblas_lanczos_execute(psblas_context_t *ctx) {
+void libpsblas_csr_lanczos_execute(psblas_context_t *ctx) {
   int info = psb_c_dexpmv_onepass(ctx->ah, ctx->cdh, ctx->yh, ctx->xh,
                                    /*tol=*/0.0,
                                    /*maxit=*/ctx->krylov_dim + 1);
@@ -344,12 +356,36 @@ void libpsblas_lanczos_execute(psblas_context_t *ctx) {
   }
 }
 
-void libpsblas_lanczos_get_y(psblas_context_t *ctx, double *out, int32_t len) {
-  libpsblas_lanczos_two_pass_get_y(ctx, out, len);
+void libpsblas_csr_lanczos_get_y(psblas_context_t *ctx, double *out, int32_t len) {
+  libpsblas_csr_lanczos_two_pass_get_y(ctx, out, len);
 }
 
-void libpsblas_lanczos_teardown(psblas_context_t *ctx) {
-  libpsblas_lanczos_two_pass_teardown(ctx);
+void libpsblas_csr_lanczos_teardown(psblas_context_t *ctx) {
+  libpsblas_csr_lanczos_two_pass_teardown(ctx);
+}
+
+psblas_context_t *
+libpsblas_csc_lanczos_setup(int32_t nrows, int32_t ncols, int32_t nnz,
+                            const int32_t *col_ptr,
+                            const int32_t *row_idx,
+                            const double *values,
+                            const double *b,
+                            int32_t krylov_dim) {
+  return libpsblas_csc_lanczos_two_pass_setup(nrows, ncols, nnz,
+                                              col_ptr, row_idx, values,
+                                              b, krylov_dim);
+}
+
+void libpsblas_csc_lanczos_execute(psblas_context_t *ctx) {
+  libpsblas_csr_lanczos_execute(ctx);
+}
+
+void libpsblas_csc_lanczos_get_y(psblas_context_t *ctx, double *out, int32_t len) {
+  libpsblas_csr_lanczos_get_y(ctx, out, len);
+}
+
+void libpsblas_csc_lanczos_teardown(psblas_context_t *ctx) {
+  libpsblas_csr_lanczos_teardown(ctx);
 }
 
 } // extern "C"
