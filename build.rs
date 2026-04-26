@@ -319,20 +319,34 @@ fn main() {
         .flag("-Wno-unused-dummy-argument") // stub has no-op functions; remove when implemented
         .compile("psblas_lanczos_wrapper");
 
-    // Two-pass Lanczos wrapper for f(A)b = exp(-A)b.
-    // Temporarily disabled while ffi/lanczos/psblas_lanczos_two_pass.f90 is WIP.
-    // cc::Build::new()
+    // Two-pass Lanczos for f(A)b = exp(-A)b. Fortran kernel + C++ FFI shim must
+    // be compiled separately: clang++ has no Fortran frontend.
     cc::Build::new()
         .file("ffi/lanczos/psblas_lanczos_two_pass.f90")
-        .file("ffi/lanczos/psblas_lanczos.cpp") // C++ wrapper is needed for the Rust FFI boundary, even if the Fortran code is not fully implemented yet
         .include(&psblas_modules)
+        .compiler(&gfortran)
+        .flag("-O3")
+        .flag("-march=native")
+        .flag("-mtune=native")
+        .flag("-ffast-math")
+        .flag("-ffat-lto-objects")
+        .flag(&fortran_mod_flag)
+        .flag("-Wno-unused-dummy-argument")
+        .compile("psblas_lanczos_two_pass_fortran");
+
+    cc::Build::new()
+        .cpp(true)
+        .file("ffi/lanczos/psblas_lanczos.cpp")
+        .include(&psblas_include)
+        .include(&mpi_include)
         .compiler(&clangxx)
         .flag("-O3")
         .flag("-march=native")
         .flag("-mtune=native")
-        .flag("-ffat-lto-objects")
-        .flag("-lgfortran")
-        .flag("-Wno-unused-dummy-argument") // stub has no-op functions; remove when implemented
+        .flag("-ffast-math")
+        .flag("-Wno-return-type-c-linkage")
+        .flag("-Wno-unused-parameter")
+        .flag("-flto")
         .compile("psblas_lanczos_two_pass_wrapper");
 
     // Use link-arg instead of link-lib: rustc discards static archives when no
@@ -365,6 +379,7 @@ fn main() {
     println!("cargo::rerun-if-changed=ffi/spmv/psblas.cpp");
     println!("cargo::rerun-if-changed=ffi/lanczos/psblas_lanczos.f90");
     println!("cargo::rerun-if-changed=ffi/lanczos/psblas_lanczos_two_pass.f90");
+    println!("cargo::rerun-if-changed=ffi/lanczos/psblas_lanczos.cpp");
     println!("cargo::rerun-if-changed=ffi/lanczos/petsc_lanczos.c");
     println!("cargo::rerun-if-changed=ffi/lanczos/petsc_lanczos_two_pass.c");
     // Force rebuild when spack environment changes (e.g. package reinstall)

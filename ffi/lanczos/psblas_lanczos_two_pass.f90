@@ -21,9 +21,7 @@ module psblas_lanczos_two_pass
    implicit none
    private
 
-   public :: libpsblas_lanczos_two_pass_setup, libpsblas_lanczos_two_pass_execute, &
-      libpsblas_lanczos_two_pass_get_y, libpsblas_lanczos_two_pass_teardown, &
-      psb_expmv_twopass
+   public :: psb_expmv_twopass
 
    interface psb_expmv_twopass
       module procedure psb_dexpmv_twopass
@@ -86,7 +84,7 @@ contains
       implicit none
       type(psb_dspmat_type), intent(in) :: a
       type(psb_desc_type), intent(in) :: desc_a
-      type(psb_d_vect_type), intent(in) :: b
+      type(psb_d_vect_type), intent(inout) :: b
       type(psb_d_vect_type), intent(inout) :: x
       real(psb_dpk_), intent(in) :: tol
       integer(psb_ipk_), intent(in) :: maxit
@@ -96,12 +94,12 @@ contains
 
       ! Local variables
       integer(psb_ipk_) :: me, np
-      integer(psb_lkp_) :: mglob
+      integer(psb_lpk_) :: mglob
       integer(psb_ipk_) :: n_row, n_col
       integer(psb_ipk_) :: i, itwo_pass
       real(psb_dpk_) :: beta, beta0, err
 
-      type(psb_cxtxt_type) :: ctxt
+      type(psb_ctxt_type) :: ctxt
       ! To store the tridiagonal matrix for the Krylov subspace projection
       ! we just need two vectors of length maxit, and maxit - 1 for the alphas
       ! and the betas
@@ -229,24 +227,24 @@ contains
          goto 9999
       end if
       beta = beta0
-      call psb_geaxpy(1.0_psb_dpk_/beta0, b, dzero, vj, desc_a, info) ! vj = b / ||b||
+      call psb_geaxpby(1.0_psb_dpk_/beta0, b, dzero, vj, desc_a, info) ! vj = b / ||b||
       firstlanczos: do i = 1, maxit-1
          !wj = A * vj - beta(i) * vjm1 = A * vj
          if (i == 1) then
-            call psb_gemv('N', 1.0_psb_dpk_, a, vj, 0.0_psb_dpk_, wj, desc_a, info)
+            call psb_spmm(1.0_psb_dpk_, a, vj, 0.0_psb_dpk_, wj, desc_a, info)
             if (info /= psb_success_) then
                info=psb_err_from_subroutine_non_
                call psb_errpush(info,name)
                goto 9999
             end if
          else
-            call psb_gemv('N', 1.0_psb_dpk_, a, vj, 0.0_psb_dpk_, wj, desc_a, info)
+            call psb_spmm(1.0_psb_dpk_, a, vj, 0.0_psb_dpk_, wj, desc_a, info)
             if (info /= psb_success_) then
                info=psb_err_from_subroutine_non_
                call psb_errpush(info,name)
                goto 9999
             end if
-            call psb_geaxpy(-betas(i), vjm1, 1.0_psb_dpk_, wj, desc_a, info) ! wj -= beta_i * v_{j-1}
+            call psb_geaxpby(-betas(i), vjm1, 1.0_psb_dpk_, wj, desc_a, info) ! wj -= beta_i * v_{j-1}
             if (info /= psb_success_) then
                info=psb_err_from_subroutine_non_
                call psb_errpush(info,name)
@@ -261,7 +259,7 @@ contains
             goto 9999
          end if
          ! wj = wj - alpha(i)  * vj = wj - tridiag(i, i) * vj
-         call psb_geaxpy(-alphas(i), vj, 1.0_psb_dpk_, wj, desc_a, info)
+         call psb_geaxpby(-alphas(i), vj, 1.0_psb_dpk_, wj, desc_a, info)
          if (info /= psb_success_) then
             info=psb_err_from_subroutine_non_
             call psb_errpush(info,name)
@@ -290,28 +288,29 @@ contains
          call expm_tridiag_core(i, alphas_wrk(1:i), betas_wrk(1:i-1), betas(i+1), beta0, Q, dsteqr_work, uvec, err)
          ! Check if the itrace_ > 0 and if mod(itrace_, i) == 0, if so print the error estimator
          if (itrace_ > 0 .and. mod(i, itrace_) == 0) then
-            write(psb_output_unit, '(A, I5, A, ES12.5)') 'Iteration ', i, ': error estimator = ', err
+            write(psb_out_unit, '(A, I5, A, ES12.5)') 'Iteration ', i, ': error estimator = ', err
          end if
          if (err < tol) then
             if (itrace_ > 0) then
-               write(psb_output_unit, '(A, I5, A, ES12.5)') 'Converged at iteration ', i, ': error estimator = ', err
+               write(psb_out_unit, '(A, I5, A, ES12.5)') 'Converged at iteration ', i, ': error estimator = ', err
             end if
             exit firstlanczos
          end if
          ! Prepare for the next iteration: vjm1 = vj, vj = wj / beta
-         call psb_geaxpy(1.0_psb_dpk_, vj, 0.0_psb_dpk_, vjm1, desc_a, info) ! vjm1 = vj
+         call psb_geaxpby(1.0_psb_dpk_, vj, 0.0_psb_dpk_, vjm1, desc_a, info) ! vjm1 = vj
          if (info /= psb_success_) then
             info=psb_err_from_subroutine_non_
             call psb_errpush(info,name)
             goto 9999
          end if
-         call psb_geaxpy(1.0_psb_dpk_/beta, wj, 0.0_psb_dpk_, vj, desc_a, info) ! vj = wj / beta
+         call psb_geaxpby(1.0_psb_dpk_/beta, wj, 0.0_psb_dpk_, vj, desc_a, info) ! vj = wj / beta
          if (info /= psb_success_) then
             info=psb_err_from_subroutine_non_
             call psb_errpush(info,name)
             goto 9999
          end if
-      end do
+      end do firstlanczos
+      i = min(i, maxit-1)
 
       ! After the Lanczos iteration, we have the tridiagonal matrix defined by alphas and betas,
       ! and we have the computed linear coefficients for the krylov basis in
@@ -325,19 +324,19 @@ contains
       ! because we already have them, we just need to perform the matrix-vector products and
       ! the axpy operations to reconstruct the krylov basis vectors, and then compute the final result.
       ! Zero x before accumulating, then restart Lanczos from v1 = b/||b||, vjm1 = 0
-      call psb_geaxpy(dzero, vj, dzero, x, desc_a, info)
+      call psb_geaxpby(dzero, vj, dzero, x, desc_a, info)
       if (info /= psb_success_) then
          info=psb_err_from_subroutine_non_
          call psb_errpush(info,name)
          goto 9999
       end if
-      call psb_geaxpy(1.0_psb_dpk_/beta0, b, dzero, vj, desc_a, info)  ! vj = b / ||b||
+      call psb_geaxpby(1.0_psb_dpk_/beta0, b, dzero, vj, desc_a, info)  ! vj = b / ||b||
       if (info /= psb_success_) then
          info=psb_err_from_subroutine_non_
          call psb_errpush(info,name)
          goto 9999
       end if
-      call psb_geaxpy(dzero, vj, dzero, vjm1, desc_a, info)              ! vjm1 = 0
+      call psb_geaxpby(dzero, vj, dzero, vjm1, desc_a, info)              ! vjm1 = 0
       if (info /= psb_success_) then
          info=psb_err_from_subroutine_non_
          call psb_errpush(info,name)
@@ -345,28 +344,34 @@ contains
       end if
       do itwo_pass = 1,i
          if (itwo_pass == 1) then
-            call psb_gemv('N', 1.0_psb_dpk_, a, vj, 0.0_psb_dpk_, wj, desc_a, info)
+            call psb_spmm(1.0_psb_dpk_, a, vj, 0.0_psb_dpk_, wj, desc_a, info)
             if (info /= psb_success_) then
                info=psb_err_from_subroutine_non_
                call psb_errpush(info,name)
                goto 9999
             end if
          else
-            call psb_gemv('N', 1.0_psb_dpk_, a, vj, 0.0_psb_dpk_, wj, desc_a, info)
+            call psb_spmm(1.0_psb_dpk_, a, vj, 0.0_psb_dpk_, wj, desc_a, info)
             if (info /= psb_success_) then
                info=psb_err_from_subroutine_non_
                call psb_errpush(info,name)
                goto 9999
             end if
-            call psb_geaxpy(-betas(itwo_pass), vjm1, 1.0_psb_dpk_, wj, desc_a, info) ! wj -= beta_j * v_{j-1}
+            call psb_geaxpby(-betas(itwo_pass), vjm1, 1.0_psb_dpk_, wj, desc_a, info) ! wj -= beta_j * v_{j-1}
             if (info /= psb_success_) then
                info=psb_err_from_subroutine_non_
                call psb_errpush(info,name)
                goto 9999
             end if
          end if
+         call psb_geaxpby(-alphas(itwo_pass), vj, 1.0_psb_dpk_, wj, desc_a, info) ! wj -= alpha_j * v_j
+         if (info /= psb_success_) then
+            info=psb_err_from_subroutine_non_
+            call psb_errpush(info,name)
+            goto 9999
+         end if
          ! x = x + uvec(itwo_pass) * vj
-         call psb_geaxpy(uvec(itwo_pass), vj, 1.0_psb_dpk_, x, desc_a, info)
+         call psb_geaxpby(uvec(itwo_pass), vj, 1.0_psb_dpk_, x, desc_a, info)
          if (info /= psb_success_) then
             info=psb_err_from_subroutine_non_
             call psb_errpush(info,name)
@@ -375,13 +380,13 @@ contains
          ! Prepare for the next iteration: vjm1 = vj, vj = wj / beta
          ! Advance Lanczos vectors for the next step (skipped on last iteration)
          if (itwo_pass < i) then
-            call psb_geaxpy(1.0_psb_dpk_, vj, dzero, vjm1, desc_a, info) ! vjm1 = vj
+            call psb_geaxpby(1.0_psb_dpk_, vj, dzero, vjm1, desc_a, info) ! vjm1 = vj
             if (info /= psb_success_) then
                info=psb_err_from_subroutine_non_
                call psb_errpush(info,name)
                goto 9999
             end if
-            call psb_geaxpy(1.0_psb_dpk_/betas(itwo_pass+1), wj, dzero, vj, desc_a, info) ! vj = wj / beta_{j+1}
+            call psb_geaxpby(1.0_psb_dpk_/betas(itwo_pass+1), wj, dzero, vj, desc_a, info) ! vj = wj / beta_{j+1}
             if (info /= psb_success_) then
                info=psb_err_from_subroutine_non_
                call psb_errpush(info,name)
@@ -389,8 +394,13 @@ contains
             end if
          end if
       end do
-      ! Scale x by ||b|| = beta0 to obtain the final result
-      call psb_gescal(beta0, x, desc_a, info)
+      call psb_geaxpby(beta0, x, dzero, wj, desc_a, info)
+      if (info /= psb_success_) then
+         info=psb_err_from_subroutine_non_
+         call psb_errpush(info,name)
+         goto 9999
+      end if
+      call psb_geaxpby(1.0_psb_dpk_, wj, dzero, x, desc_a, info)
       if (info /= psb_success_) then
          info=psb_err_from_subroutine_non_
          call psb_errpush(info,name)
@@ -482,7 +492,7 @@ contains
 
       ! Apply exponential of eigenvalues
       do i = 1, m
-         w(i) = exp(d(i)) * w(i)
+         w(i) = exp(-d(i)) * w(i)
       end do
 
       ! u = Q * w = exp(T_m) e1

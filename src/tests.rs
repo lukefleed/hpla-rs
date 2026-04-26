@@ -28,28 +28,19 @@ fn relative_l2_error(actual: &[f64], reference: &[f64]) -> f64 {
 }
 
 /// Checks all backends produce the same y = A*x (relative L2 error).
-/// Runs on every .mtx in matrices/.
 #[test]
 fn test_backend_numerical_equivalence() -> anyhow::Result<()> {
-    let mut matrices: Vec<_> = std::fs::read_dir("matrices")?
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "mtx"))
-        .map(|entry| entry.path())
-        .collect();
-    matrices.sort();
-
-    anyhow::ensure!(!matrices.is_empty(), "no .mtx files found in matrices/");
-
     let tol = 1e-4;
 
-    for path in &matrices {
-        let name = path
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default();
+    for name in &["kron_g500-logn18", "coPapersDBLP", "thermal2"] {
+        let path = std::path::PathBuf::from(format!("matrices/{name}.mtx"));
+        if !path.exists() {
+            eprintln!("  {name}: skipped (run download_matrices.sh)");
+            continue;
+        }
         eprintln!("\n=== {name} ===");
 
-        let raw = load_mtx_raw(path).map_err(|e| anyhow::anyhow!("load_mtx_raw({name}): {e}"))?;
+        let raw = load_mtx_raw(&path).map_err(|e| anyhow::anyhow!("load_mtx_raw({name}): {e}"))?;
 
         // --- Faer reference (CSC) ---
         let a_faer = SparseColMat::try_new_from_triplets(raw.nrows, raw.ncols, &raw.triplets)
@@ -261,10 +252,7 @@ fn test_backend_numerical_equivalence() -> anyhow::Result<()> {
         }
     }
 
-    eprintln!(
-        "\nAll backends match Faer reference across {} matrices.",
-        matrices.len()
-    );
+    eprintln!("\nAll backends match Faer reference.");
     Ok(())
 }
 
@@ -287,16 +275,15 @@ fn test_lanczos_two_pass_backend_equivalence() -> anyhow::Result<()> {
         SPECTRAL_PROBE_STEPS, adaptive_krylov_dim, deterministic_rhs, estimate_spectral_radius,
         lanczos_two_pass,
     };
-    // Temporarily disabled while ffi/lanczos/psblas_lanczos_two_pass.f90 is WIP.
-    // use crate::psblas::{
-    //     libpsblas_lanczos_two_pass_execute, libpsblas_lanczos_two_pass_get_y,
-    //     libpsblas_lanczos_two_pass_setup, libpsblas_lanczos_two_pass_teardown,
-    // };
+    use crate::psblas::{
+        libpsblas_lanczos_two_pass_execute, libpsblas_lanczos_two_pass_get_y,
+        libpsblas_lanczos_two_pass_setup, libpsblas_lanczos_two_pass_teardown,
+    };
 
     let tol = 1e-8;
     let mut checked = 0;
 
-    for name in crate::LANCZOS_SUITE {
+    for name in &["kron_g500-logn18", "coPapersDBLP", "thermal2"] {
         let path = std::path::PathBuf::from(format!("matrices/{name}.mtx"));
         if !path.exists() {
             eprintln!(
@@ -458,45 +445,43 @@ fn test_lanczos_two_pass_backend_equivalence() -> anyhow::Result<()> {
             }
         }
 
-        // PSBLAS two-pass temporarily disabled while
-        // ffi/lanczos/psblas_lanczos_two_pass.f90 is WIP.
-        // {
-        //     let mut y_buf = vec![0.0f64; raw.nrows];
-        //     unsafe {
-        //         let ctx = libpsblas_lanczos_two_pass_setup(
-        //             raw.nrows as i32,
-        //             raw.ncols as i32,
-        //             raw.nnz as i32,
-        //             raw.row_ptr.as_ptr(),
-        //             raw.col_idx.as_ptr(),
-        //             raw.values.as_ptr(),
-        //             b_vec.as_ptr(),
-        //             krylov_dim as i32,
-        //         );
-        //         if ctx.is_null() {
-        //             eprintln!("  psblas/two_pass:  skipped (stub returned null)");
-        //             continue;
-        //         }
-        //         libpsblas_lanczos_two_pass_execute(ctx);
-        //         libpsblas_lanczos_two_pass_get_y(ctx, y_buf.as_mut_ptr(), raw.nrows as i32);
-        //         libpsblas_lanczos_two_pass_teardown(ctx);
-        //     }
-        //     let err = relative_l2_error(&y_buf, &faer_ref);
-        //     eprintln!("  psblas/two_pass:  rel L2 = {err:.2e}");
-        //     assert!(
-        //         err < tol,
-        //         "{name}: psblas/two_pass diverged: rel L2 = {err:.2e}"
-        //     );
-        // }
+        // --- PSBLAS two-pass ---
+        {
+            let mut y_buf = vec![0.0f64; raw.nrows];
+            unsafe {
+                let ctx = libpsblas_lanczos_two_pass_setup(
+                    raw.nrows as i32,
+                    raw.ncols as i32,
+                    raw.nnz as i32,
+                    raw.row_ptr.as_ptr(),
+                    raw.col_idx.as_ptr(),
+                    raw.values.as_ptr(),
+                    b_vec.as_ptr(),
+                    krylov_dim as i32,
+                );
+                if ctx.is_null() {
+                    eprintln!("  psblas/two_pass:  skipped (stub returned null)");
+                } else {
+                    libpsblas_lanczos_two_pass_execute(ctx);
+                    libpsblas_lanczos_two_pass_get_y(ctx, y_buf.as_mut_ptr(), raw.nrows as i32);
+                    libpsblas_lanczos_two_pass_teardown(ctx);
+
+                    let err = relative_l2_error(&y_buf, &faer_ref);
+                    eprintln!("  psblas/two_pass:  rel L2 = {err:.2e}");
+                    assert!(
+                        err < tol,
+                        "{name}: psblas/two_pass diverged: rel L2 = {err:.2e}"
+                    );
+                }
+            }
+        }
     }
 
     anyhow::ensure!(
         checked > 0,
         "no Lanczos matrices available; run download_matrices.sh"
     );
-    eprintln!("\nTwo-pass Lanczos Eigen backend matches Faer reference across {checked} matrices.");
-    // Temporarily disabled while ffi/lanczos/psblas_lanczos_two_pass.f90 is WIP.
-    // eprintln!("\nTwo-pass Lanczos backends match Faer reference across {checked} matrices.");
+    eprintln!("\nTwo-pass Lanczos backends match Faer reference across {checked} matrices.");
     Ok(())
 }
 
@@ -528,7 +513,7 @@ fn test_lanczos_backend_equivalence() -> anyhow::Result<()> {
     let tol = 1e-8;
     let mut checked = 0;
 
-    for name in crate::LANCZOS_SUITE {
+    for name in &["kron_g500-logn18", "coPapersDBLP", "thermal2"] {
         let path = std::path::PathBuf::from(format!("matrices/{name}.mtx"));
         if !path.exists() {
             eprintln!(

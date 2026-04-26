@@ -27,11 +27,10 @@ use hpla_rs::petsc::{
     libpetsc_lanczos_two_pass_teardown,
 };
 use hpla_rs::{load_mtx_raw, scale_values};
-// Temporarily disabled while ffi/lanczos/psblas_lanczos_two_pass.f90 is WIP.
-// use hpla_rs::psblas::{
-//     libpsblas_lanczos_two_pass_execute, libpsblas_lanczos_two_pass_setup,
-//     libpsblas_lanczos_two_pass_teardown,
-// };
+use hpla_rs::psblas::{
+    libpsblas_lanczos_two_pass_execute, libpsblas_lanczos_two_pass_setup,
+    libpsblas_lanczos_two_pass_teardown,
+};
 
 use common::{lanczos_matrices, probe_krylov_dim};
 use hpla_rs::lanczos::deterministic_rhs;
@@ -261,30 +260,33 @@ fn bench_lanczos_two_pass(c: &mut Criterion) {
         // --------------------------------------------------------
         // PSBLAS (two-pass Lanczos)
         // --------------------------------------------------------
-        // Temporarily disabled while ffi/lanczos/psblas_lanczos_two_pass.f90 is WIP.
-        // unsafe {
-        //     let ctx = libpsblas_lanczos_two_pass_setup(
-        //         raw.nrows as i32,
-        //         raw.ncols as i32,
-        //         raw.nnz as i32,
-        //         raw.row_ptr.as_ptr(),
-        //         raw.col_idx.as_ptr(),
-        //         raw.values.as_ptr(),
-        //         b_vec.as_ptr(),
-        //         krylov_dim as i32,
-        //     );
-        //
-        //     if !ctx.is_null() {
-        //         group.bench_with_input(BenchmarkId::new("psblas", "two_pass"), &(), |bench, _| {
-        //             bench.iter(|| {
-        //                 libpsblas_lanczos_two_pass_execute(ctx);
-        //                 criterion::black_box(ctx);
-        //             });
-        //         });
-        //
-        //         libpsblas_lanczos_two_pass_teardown(ctx);
-        //     }
-        // }
+        unsafe {
+            let ctx = libpsblas_lanczos_two_pass_setup(
+                raw.nrows as i32,
+                raw.ncols as i32,
+                raw.nnz as i32,
+                raw.row_ptr.as_ptr(),
+                raw.col_idx.as_ptr(),
+                raw.values.as_ptr(),
+                b_vec.as_ptr(),
+                krylov_dim as i32,
+            );
+
+            if !ctx.is_null() {
+                group.bench_with_input(
+                    BenchmarkId::new("psblas", "two_pass"),
+                    &(),
+                    |bench, _| {
+                        bench.iter(|| {
+                            libpsblas_lanczos_two_pass_execute(ctx);
+                            criterion::black_box(ctx);
+                        });
+                    },
+                );
+
+                libpsblas_lanczos_two_pass_teardown(ctx);
+            }
+        }
 
         group.finish();
     }

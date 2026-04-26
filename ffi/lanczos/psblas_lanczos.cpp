@@ -22,18 +22,31 @@ typedef struct {
   psb_c_ctxt *cctxt;
   psb_c_descriptor *cdh;
   psb_c_dspmat *ah;
+  // xh: output vector — receives the result of exp(-A)b from the Fortran kernel.
   psb_c_dvector *xh;
+  // yh: input vector — holds the starting vector b, read by the Fortran kernel.
   psb_c_dvector *yh;
   psb_l_t *vl;
+  // Number of Lanczos iterations, passed through to psb_c_dexpmv_twopass as
+  // maxit = krylov_dim + 1 (the Fortran loop runs for maxit-1 iterations).
+  int krylov_dim;
 } psblas_context_t;
 
 extern "C" {
 
+// Defined in ffi/lanczos/psblas_lanczos_two_pass.f90 as a bind(C) thin shim
+// over psb_dexpmv_twopass; not exposed by psb_base_cbind.h.
+int psb_c_dexpmv_twopass(psb_c_dspmat *ah, psb_c_descriptor *desc_ah,
+                         psb_c_dvector *bh, psb_c_dvector *xh,
+                         double tol, int maxit);
+
 psblas_context_t *
-libpsblas_spmv_setup(int32_t nrows, int32_t ncols, int32_t nnz,
-                     const int32_t *row_ptr,  // CSR row pointers (0-based)
-                     const int32_t *col_idx,  // CSR column indices (0-based)
-                     const double *values     // CSR values
+libpsblas_lanczos_two_pass_setup(int32_t nrows, int32_t ncols, int32_t nnz,
+                     const int32_t *row_ptr,   // CSR row pointers (0-based)
+                     const int32_t *col_idx,   // CSR column indices (0-based)
+                     const double *values,     // CSR values
+                     const double *b,          // starting vector, length nrows
+                     int32_t krylov_dim        // number of Lanczos iterations
 ) {
   (void)nnz; // Suppress unused parameter warning
 
@@ -103,8 +116,19 @@ libpsblas_spmv_setup(int32_t nrows, int32_t ncols, int32_t nnz,
   psb_c_dgeasb(ctx->xh, ctx->cdh);
   psb_c_dgeasb(ctx->yh, ctx->cdh);
 
-  psb_c_dvect_set_scal(ctx->xh, 1.0);
-  psb_c_dvect_set_scal(ctx->yh, 0.0);
+  // xh is the output buffer; zero it so execute() accumulates from scratch.
+  psb_c_dvect_set_scal(ctx->xh, 0.0);
+
+  // yh holds the starting vector b; copy the caller's buffer element-by-element.
+  {
+    double *yptr = psb_c_dvect_f_get_pnt(ctx->yh);
+    for (int32_t i = 0; i < nrows; i++)
+      yptr[i] = b[i];
+  }
+
+  // Save the Krylov dimension so execute() can forward it to the Fortran kernel.
+  // The Fortran loop runs for maxit-1 iterations, so pass krylov_dim+1.
+  ctx->krylov_dim = krylov_dim;
 
   ctx->ah = psb_c_new_dspmat();
   psb_c_dspall(ctx->ah, ctx->cdh);
@@ -142,26 +166,30 @@ libpsblas_spmv_setup(int32_t nrows, int32_t ncols, int32_t nnz,
   return ctx;
 }
 
-void libpsblas_spmv_execute(psblas_context_t *ctx, double tol, int max_iters) {
-  // y = alpha * A * x + beta * y
-  // alpha = 1.0, beta = 1.0  =>  y += A*x
-  // int info = psb_c_dspmm(1.0, ctx->ah, ctx->xh, 1.0, ctx->yh, ctx->cdh);
-  int info = psb_c_dexpmv_twopass(ctx->ah, ctx->cdh, ctx->yh, ctx->xh, tol, max_iters);
+void libpsblas_lanczos_two_pass_execute(psblas_context_t *ctx) {
+  // tol=0.0 disables early-exit convergence: the kernel always runs exactly
+  // krylov_dim iterations, matching the bench contract for Faer and Eigen.
+  // The Fortran loop is `do i = 1, maxit-1`, so maxit = krylov_dim+1 yields
+  // exactly krylov_dim SpMV steps.
+  int info = psb_c_dexpmv_twopass(ctx->ah, ctx->cdh, ctx->yh, ctx->xh,
+                                   /*tol=*/0.0,
+                                   /*maxit=*/ctx->krylov_dim + 1);
   if (info != 0) {
-    fprintf(stderr, "[PSBLAS] Fatal: dspmm failed with %d\n", info);
+    fprintf(stderr, "[PSBLAS] Fatal: psb_c_dexpmv_twopass failed with %d\n", info);
   }
 }
 
-void libpsblas_spmv_get_y(psblas_context_t *ctx, double *out, int32_t len) {
+void libpsblas_lanczos_two_pass_get_y(psblas_context_t *ctx, double *out, int32_t len) {
+    // xh holds the result of exp(-A)b written by the Fortran kernel.
     // psb_c_dvect_f_get_pnt returns a raw pointer to the internal Fortran
     // vector storage, avoiding an extra allocation + copy.
-    double *yptr = psb_c_dvect_f_get_pnt(ctx->yh);
-    int32_t nrows = psb_c_dvect_get_nrows(ctx->yh);
+    double *xptr = psb_c_dvect_f_get_pnt(ctx->xh);
+    int32_t nrows = psb_c_dvect_get_nrows(ctx->xh);
     int32_t n = len < nrows ? len : nrows;
-    for (int32_t i = 0; i < n; i++) out[i] = yptr[i];
+    for (int32_t i = 0; i < n; i++) out[i] = xptr[i];
 }
 
-void libpsblas_spmv_teardown(psblas_context_t *ctx) {
+void libpsblas_lanczos_two_pass_teardown(psblas_context_t *ctx) {
   if (!ctx)
     return;
 
@@ -187,10 +215,12 @@ void libpsblas_spmv_teardown(psblas_context_t *ctx) {
 }
 
 psblas_context_t *
-libpsblas_csc_spmv_setup(int32_t nrows, int32_t ncols, int32_t nnz,
+libpsblas_csc_lanczos_two_pass_setup(int32_t nrows, int32_t ncols, int32_t nnz,
                          const int32_t *col_ptr,
                          const int32_t *row_idx,
-                         const double *values) {
+                         const double *values,
+                         const double *b,
+                         int32_t krylov_dim) {
   (void)nnz;
 
   psblas_context_t *ctx = (psblas_context_t *)malloc(sizeof(psblas_context_t));
@@ -241,8 +271,18 @@ libpsblas_csc_spmv_setup(int32_t nrows, int32_t ncols, int32_t nnz,
   psb_c_dgeasb(ctx->xh, ctx->cdh);
   psb_c_dgeasb(ctx->yh, ctx->cdh);
 
-  psb_c_dvect_set_scal(ctx->xh, 1.0);
-  psb_c_dvect_set_scal(ctx->yh, 0.0);
+  // xh is the output buffer; zero it so execute() accumulates from scratch.
+  psb_c_dvect_set_scal(ctx->xh, 0.0);
+
+  // yh holds the starting vector b; copy the caller's buffer element-by-element.
+  {
+    double *yptr = psb_c_dvect_f_get_pnt(ctx->yh);
+    for (int32_t i = 0; i < nrows; i++)
+      yptr[i] = b[i];
+  }
+
+  // Save the Krylov dimension so execute() can forward it to the Fortran kernel.
+  ctx->krylov_dim = krylov_dim;
 
   ctx->ah = psb_c_new_dspmat();
   psb_c_dspall(ctx->ah, ctx->cdh);

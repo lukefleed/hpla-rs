@@ -108,4 +108,18 @@ unsafe extern "C" {
     /// Frees all PSBLAS objects. Must use `psb_c_exit_ctxt` (not
     /// `psb_c_exit`) to avoid calling `MPI_Finalize`.
     pub fn libpsblas_lanczos_two_pass_teardown(ctx: *mut PsblasLanczosTwoPass);
+
+    /// CSC variant of the two-pass setup. Inserts from CSC arrays and
+    /// assembles internally as CSC. The execute/get_y/teardown symbols
+    /// are shared with the CSR variant (same opaque context).
+    pub fn libpsblas_csc_lanczos_two_pass_setup(
+        nrows: i32,
+        ncols: i32,
+        nnz: i32,
+        col_ptr: *const i32,
+        row_idx: *const i32,
+        values: *const c_double,
+        b: *const c_double,
+        krylov_dim: i32,
+    ) -> *mut PsblasLanczosTwoPass;
 }
