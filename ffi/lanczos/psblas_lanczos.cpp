@@ -40,6 +40,11 @@ int psb_c_dexpmv_twopass(psb_c_dspmat *ah, psb_c_descriptor *desc_ah,
                          psb_c_dvector *bh, psb_c_dvector *xh,
                          double tol, int maxit);
 
+// Defined in ffi/lanczos/psblas_lanczos.f90.
+int psb_c_dexpmv_onepass(psb_c_dspmat *ah, psb_c_descriptor *desc_ah,
+                         psb_c_dvector *bh, psb_c_dvector *xh,
+                         double tol, int maxit);
+
 psblas_context_t *
 libpsblas_lanczos_two_pass_setup(int32_t nrows, int32_t ncols, int32_t nnz,
                      const int32_t *row_ptr,   // CSR row pointers (0-based)
@@ -316,6 +321,35 @@ libpsblas_csc_lanczos_two_pass_setup(int32_t nrows, int32_t ncols, int32_t nnz,
   }
 
   return ctx;
+}
+
+psblas_context_t *
+libpsblas_lanczos_setup(int32_t nrows, int32_t ncols, int32_t nnz,
+                        const int32_t *row_ptr,
+                        const int32_t *col_idx,
+                        const double *values,
+                        const double *b,
+                        int32_t krylov_dim) {
+  return libpsblas_lanczos_two_pass_setup(nrows, ncols, nnz,
+                                          row_ptr, col_idx, values,
+                                          b, krylov_dim);
+}
+
+void libpsblas_lanczos_execute(psblas_context_t *ctx) {
+  int info = psb_c_dexpmv_onepass(ctx->ah, ctx->cdh, ctx->yh, ctx->xh,
+                                   /*tol=*/0.0,
+                                   /*maxit=*/ctx->krylov_dim + 1);
+  if (info != 0) {
+    fprintf(stderr, "[PSBLAS] Fatal: psb_c_dexpmv_onepass failed with %d\n", info);
+  }
+}
+
+void libpsblas_lanczos_get_y(psblas_context_t *ctx, double *out, int32_t len) {
+  libpsblas_lanczos_two_pass_get_y(ctx, out, len);
+}
+
+void libpsblas_lanczos_teardown(psblas_context_t *ctx) {
+  libpsblas_lanczos_two_pass_teardown(ctx);
 }
 
 } // extern "C"

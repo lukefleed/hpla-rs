@@ -677,7 +677,7 @@ fn test_lanczos_backend_equivalence() -> anyhow::Result<()> {
             }
         }
 
-        // --- PSBLAS ---
+        // --- PSBLAS one-pass ---
         {
             let mut y_buf = vec![0.0f64; raw.nrows];
             unsafe {
@@ -693,18 +693,19 @@ fn test_lanczos_backend_equivalence() -> anyhow::Result<()> {
                 );
                 if ctx.is_null() {
                     eprintln!("  psblas/one_pass:  skipped (stub returned null)");
-                    continue;
+                } else {
+                    libpsblas_lanczos_execute(ctx);
+                    libpsblas_lanczos_get_y(ctx, y_buf.as_mut_ptr(), raw.nrows as i32);
+                    libpsblas_lanczos_teardown(ctx);
+
+                    let err = relative_l2_error(&y_buf, &faer_ref);
+                    eprintln!("  psblas/one_pass:  rel L2 = {err:.2e}");
+                    assert!(
+                        err < tol,
+                        "{name}: psblas/one_pass diverged: rel L2 = {err:.2e}"
+                    );
                 }
-                libpsblas_lanczos_execute(ctx);
-                libpsblas_lanczos_get_y(ctx, y_buf.as_mut_ptr(), raw.nrows as i32);
-                libpsblas_lanczos_teardown(ctx);
             }
-            let err = relative_l2_error(&y_buf, &faer_ref);
-            eprintln!("  psblas/one_pass:  rel L2 = {err:.2e}");
-            assert!(
-                err < tol,
-                "{name}: psblas/one_pass diverged: rel L2 = {err:.2e}"
-            );
         }
     }
 

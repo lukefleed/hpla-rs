@@ -52,22 +52,26 @@ contains
       maxit_f = maxit
       if (c_associated(desc_ah%item)) then
          call c_f_pointer(desc_ah%item, desc_a)
-      else 
+      else
+         info = -1
          return
       end if
       if (c_associated(ah%item)) then
          call c_f_pointer(ah%item, a)
       else
+         info = -1
          return
       end if
       if (c_associated(bh%item)) then
          call c_f_pointer(bh%item, b)
       else
+         info = -1
          return
       end if
       if (c_associated(xh%item)) then
          call c_f_pointer(xh%item, x)
       else
+         info = -1
          return
       end if
 
@@ -95,7 +99,6 @@ contains
       ! Local variables
       integer(psb_ipk_) :: me, np
       integer(psb_lpk_) :: mglob
-      integer(psb_ipk_) :: n_row, n_col
       integer(psb_ipk_) :: i, itwo_pass
       real(psb_dpk_) :: beta, beta0, err
 
@@ -122,7 +125,6 @@ contains
       ! Error handling variables
       integer(psb_ipk_) :: debug_level, debug_unit, err_act
       character(len=20) :: name
-      character(len=20) :: methdname
 
       ! Initialize error handling parameters
       info = psb_success_
@@ -147,11 +149,7 @@ contains
          goto 9999
       end if
 
-      ! Get the global matrix dimensions
       mglob = desc_a%get_global_rows()
-      ! And the local ones
-      n_row = desc_a%get_local_rows()
-      n_col = desc_a%get_global_cols()
 
       ! We use them to check the state of the input vectors
       call psb_chkvect(mglob,lone,x%get_nrows(),lone,lone,desc_a,info)
@@ -274,7 +272,7 @@ contains
          end if
          betas(i+1) = beta
          ! Check for convergence or breakdown
-         if (beta == dzero) then
+         if (beta <= tiny(beta)) then
             ! Lanczos breakdown: stop the iteration
             if (debug_level >= psb_debug_ext_) then
                write(debug_unit, *) me, ' ', trim(name), ': Lanczos breakdown at iteration ', i

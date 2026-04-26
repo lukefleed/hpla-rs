@@ -305,7 +305,9 @@ fn main() {
     let fortran_mod_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
     let fortran_mod_flag = format!("-J{fortran_mod_dir}");
 
-    // One-pass Lanczos wrapper.
+    // One-pass and two-pass Lanczos for f(A)b = exp(-A)b. Fortran kernels +
+    // shared C++ FFI shim must be compiled separately: clang++ has no Fortran
+    // frontend.
     cc::Build::new()
         .file("ffi/lanczos/psblas_lanczos.f90")
         .include(&psblas_modules)
@@ -316,11 +318,9 @@ fn main() {
         .flag("-ffast-math")
         .flag("-ffat-lto-objects")
         .flag(&fortran_mod_flag)
-        .flag("-Wno-unused-dummy-argument") // stub has no-op functions; remove when implemented
-        .compile("psblas_lanczos_wrapper");
+        .flag("-Wno-unused-dummy-argument")
+        .compile("psblas_lanczos_fortran");
 
-    // Two-pass Lanczos for f(A)b = exp(-A)b. Fortran kernel + C++ FFI shim must
-    // be compiled separately: clang++ has no Fortran frontend.
     cc::Build::new()
         .file("ffi/lanczos/psblas_lanczos_two_pass.f90")
         .include(&psblas_modules)
