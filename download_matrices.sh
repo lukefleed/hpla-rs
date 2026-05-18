@@ -19,7 +19,7 @@ mkdir -p "${TEMP_DIR}"
 #
 # The first block is used by the SpMV bench: a mix of FEM, circuit,
 # graph, economic, and CFD matrices chosen for sparsity-pattern variety.
-# The second block is the dedicated Lanczos suite: symmetric matrices
+# The second block adds the dedicated Lanczos-only inputs: symmetric matrices
 # with zero or small mean diagonal so that exp(-A)v is numerically
 # well-posed for the Saad a posteriori error estimator. See
 # src/lib.rs::LANCZOS_SUITE for the consumed list.
@@ -45,6 +45,15 @@ MATRICES=(
     "DIMACS10/coPapersDBLP"
     "SNAP/as-Skitter"
     "DIMACS10/delaunay_n22"
+    "DIMACS10/caidaRouterLevel"
+    "DIMACS10/citationCiteseer"
+    "DIMACS10/coAuthorsCiteseer"
+    "DIMACS10/coPapersCiteseer"
+    "DIMACS10/preferentialAttachment"
+    "DIMACS10/smallworld"
+    "DIMACS10/rgg_n_2_20_s0"
+    "DIMACS10/belgium_osm"
+    "DIMACS10/auto"
 )
 
 for entry in "${MATRICES[@]}"; do

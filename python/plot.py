@@ -28,6 +28,34 @@ plt.rcParams.update({
 })
 
 # ---------------------------------------------------------------------------
+# Library palette (Wong colorblind-safe)
+# ---------------------------------------------------------------------------
+
+LIBRARY_COLORS = {
+    'faer':   '#0072B2',  # blue
+    'eigen':  '#E69F00',  # orange
+    'petsc':  '#009E73',  # green
+    'psblas': '#D55E00',  # vermilion
+    'mkl':    '#CC79A7',  # reddish purple
+}
+
+
+def _library_of_spmv(backend):
+    return backend.split('/', 1)[0]
+
+
+def _library_of_lanczos(backend):
+    head = backend.split('/', 1)[0]
+    return head.split('_', 1)[0]
+
+
+def _bar_label(config):
+    if config.endswith(('/one_pass', '/two_pass')):
+        return config.rsplit('/', 1)[0]
+    return config.replace('/', '\n')
+
+
+# ---------------------------------------------------------------------------
 # SpMV configuration
 # ---------------------------------------------------------------------------
 
@@ -42,18 +70,8 @@ SPMV_CONFIG_ORDER = [
     'mkl/csr_ie', 'mkl/csc_ie',
 ]
 
-SPMV_BACKEND_COLORS = {
-    'faer/csc':          '#0072B2',  # blue
-    'faer/csr':          '#4477AA',  # steel blue
-    'eigen/csc_map':     '#E69F00',  # orange
-    'eigen/csr_map':     '#CC79A7',  # pink
-    'petsc/csr_inodes':  '#009E73',  # green
-    'petsc/csr_raw':     '#56B4E9',  # sky blue
-    'psblas/csr':        '#D55E00',  # vermilion
-    'psblas/csc':        '#E6550D',  # dark vermilion
-    'mkl/csr_ie':        '#F0E442',  # yellow
-    'mkl/csc_ie':        '#000000',  # black
-}
+SPMV_BACKEND_COLORS = {b: LIBRARY_COLORS[_library_of_spmv(b)]
+                       for b in SPMV_CONFIG_ORDER}
 
 # ---------------------------------------------------------------------------
 # Lanczos two-pass configuration
@@ -69,15 +87,8 @@ LANCZOS_TWO_PASS_CONFIG_ORDER = [
 ]
 
 LANCZOS_TWO_PASS_BACKEND_COLORS = {
-    'faer_csc/two_pass':    '#0072B2',  # blue
-    'faer_csr/two_pass':    '#4477AA',  # steel blue
-    'faer/two_pass':        '#0072B2',  # blue
-    'eigen_csr/two_pass':   '#E69F00',  # orange
-    'eigen_csc/two_pass':   '#CC79A7',  # pink
-    'eigen/two_pass':       '#E69F00',  # orange
-    'petsc_csr/two_pass':   '#009E73',  # green
-    'psblas_csr/two_pass':  '#D55E00',  # vermilion
-    'psblas_csc/two_pass':  '#E6550D',  # dark vermilion
+    b: LIBRARY_COLORS[_library_of_lanczos(b)]
+    for b in LANCZOS_TWO_PASS_CONFIG_ORDER
 }
 
 # ---------------------------------------------------------------------------
@@ -94,15 +105,8 @@ LANCZOS_ONE_PASS_CONFIG_ORDER = [
 ]
 
 LANCZOS_ONE_PASS_BACKEND_COLORS = {
-    'faer_csc/one_pass':    '#0072B2',  # blue
-    'faer_csr/one_pass':    '#4477AA',  # steel blue
-    'faer/one_pass':        '#0072B2',  # blue
-    'eigen_csr/one_pass':   '#E69F00',  # orange
-    'eigen_csc/one_pass':   '#CC79A7',  # pink
-    'eigen/one_pass':       '#E69F00',  # orange
-    'petsc_csr/one_pass':   '#009E73',  # green
-    'psblas_csr/one_pass':  '#D55E00',  # vermilion
-    'psblas_csc/one_pass':  '#E6550D',  # dark vermilion
+    b: LIBRARY_COLORS[_library_of_lanczos(b)]
+    for b in LANCZOS_ONE_PASS_CONFIG_ORDER
 }
 
 
@@ -464,7 +468,7 @@ def generate_plots(df, output_dir, config_order, backend_colors,
         ylim_top = max(local_max, ceiling) * 1.15 if ceiling is not None else local_max * 1.15
         plt.ylim(0, ylim_top)
 
-        formatted_labels = [cfg.replace('/', '\n') for cfg in matrix_df['Configuration']]
+        formatted_labels = [_bar_label(cfg) for cfg in matrix_df['Configuration']]
         plt.xticks(x_pos, formatted_labels, rotation=0, ha='center', fontsize=11)
         plt.yticks(fontsize=11)
         plt.tight_layout()
@@ -606,10 +610,7 @@ def plot_perfprof(configs, libraries, throughput, backend_colors, title,
 
         rho_lib(theta) = #{i : r[i, lib] <= theta} / n_matrices,
 
-    drawn as a steps-post line plus circular markers at every distinct
-    ``theta``.  The leftmost marker (at the smallest ``theta``) makes
-    the win rate at ``theta = 1`` always visible, even when a library
-    dominates the slice.
+    drawn as a steps-post line.
     """
     n_matrices, n_libraries = throughput.shape
     if n_matrices == 0 or n_libraries == 0:
@@ -637,8 +638,6 @@ def plot_perfprof(configs, libraries, throughput, backend_colors, title,
         color = backend_colors.get(cfg, '#999999')
         ax.plot(x, y, drawstyle='steps-post', label=lib,
                 color=color, linewidth=2.0, zorder=5)
-        ax.scatter(unique_theta, cum_prob, color=color, s=55,
-                   edgecolors='white', linewidths=1.0, zorder=10)
 
     ax.set_xscale('log')
     ax.set_xlim(1.0, thmax)
@@ -662,8 +661,76 @@ def plot_perfprof(configs, libraries, throughput, backend_colors, title,
     print(f"[perfprof] Saved -> {save_path}")
 
 
+def parse_spmv_config(config):
+    """Parse a SpMV configuration string into (library, format, variant).
+
+    SpMV backend ids follow ``"<library>/<fmt>[_<variant>]"``, e.g.
+    ``"petsc/csr_inodes"`` -> ``("petsc", "csr", "inodes")`` and
+    ``"faer/csr"`` -> ``("faer", "csr", None)``.  Returns ``None`` for
+    strings that do not match.
+    """
+    if '/' not in config:
+        return None
+    library, suffix = config.split('/', 1)
+    parts = suffix.split('_', 1)
+    fmt = parts[0]
+    if fmt not in ('csr', 'csc'):
+        return None
+    variant = parts[1] if len(parts) > 1 else None
+    return library, fmt, variant
+
+
+def spmv_slice(df, fmt):
+    """Pivot ``Matrix x Backend`` for one SpMV storage format.
+
+    Returns ``(configs, labels, matrices, throughput)`` aligned across
+    all backends in the slice; matrices missing data for any backend
+    are dropped.  Labels collapse to the library name when a single
+    variant exists, falling back to ``"<library> (<variant>)"`` when a
+    library exposes more than one (e.g. petsc inodes vs raw on CSR).
+    """
+    pairs = []
+    for cfg in sorted(df['Configuration'].unique()):
+        parsed = parse_spmv_config(cfg)
+        if parsed is None:
+            continue
+        library, cfg_fmt, variant = parsed
+        if cfg_fmt != fmt:
+            continue
+        pairs.append((cfg, library, variant))
+
+    if not pairs:
+        return [], [], [], np.empty((0, 0))
+
+    library_counts = {}
+    for _, lib, _ in pairs:
+        library_counts[lib] = library_counts.get(lib, 0) + 1
+
+    configs = []
+    labels = []
+    for cfg, lib, variant in pairs:
+        configs.append(cfg)
+        if library_counts[lib] > 1 and variant is not None:
+            labels.append(f"{lib} ({variant})")
+        else:
+            labels.append(lib)
+
+    sub = df[df['Configuration'].isin(configs)]
+    pivot = (sub
+             .pivot(index='Matrix', columns='Configuration',
+                    values='Throughput (GFLOP/s)')
+             .reindex(columns=configs)
+             .dropna())
+
+    if pivot.empty:
+        return configs, labels, [], np.empty((0, len(labels)))
+
+    matrices = list(pivot.index)
+    return configs, labels, matrices, pivot.values
+
+
 def run_perfprof(criterion_dir):
-    """Generate the four Lanczos throughput-exceedance plots."""
+    """Generate Lanczos and SpMV throughput-exceedance plots."""
     output_dir = Path(__file__).parent / "perfprof"
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -671,14 +738,16 @@ def run_perfprof(criterion_dir):
     df_one = load_data(criterion_dir, "lanczos_", derive_nnz=lambda e: e,
                        exclude_prefix="lanczos_two_pass_")
     df_two = load_data(criterion_dir, "lanczos_two_pass_", derive_nnz=lambda e: e)
+    df_spmv = load_data(criterion_dir, "spmv_", derive_nnz=lambda e: e // 2)
 
-    if df_one.empty and df_two.empty:
-        print("No Lanczos data found. Run "
+    if df_one.empty and df_two.empty and df_spmv.empty:
+        print("No benchmark data found. Run "
+              "'cargo bench --bench spmv', "
               "'cargo bench --bench lanczos' and "
               "'cargo bench --bench lanczos_two_pass' first.")
         sys.exit(1)
 
-    plots = [
+    lanczos_plots = [
         (df_one, 'one_pass', 'csr', LANCZOS_ONE_PASS_BACKEND_COLORS,
          'One-Pass Lanczos, CSR'),
         (df_one, 'one_pass', 'csc', LANCZOS_ONE_PASS_BACKEND_COLORS,
@@ -689,7 +758,7 @@ def run_perfprof(criterion_dir):
          'Two-Pass Lanczos, CSC'),
     ]
 
-    for df, kernel, fmt, colors, label in plots:
+    for df, kernel, fmt, colors, label in lanczos_plots:
         if df.empty:
             print(f"[skip] {kernel}/{fmt}: no benchmark data")
             continue
@@ -700,6 +769,24 @@ def run_perfprof(criterion_dir):
 
         pp_path = output_dir / f"perfprof_{kernel}_{fmt}.png"
         plot_perfprof(configs, libraries, throughput, colors,
+                      f'Performance Profile, {label}', pp_path)
+
+    spmv_plots = [
+        ('csr', 'SpMV, CSR'),
+        ('csc', 'SpMV, CSC'),
+    ]
+
+    for fmt, label in spmv_plots:
+        if df_spmv.empty:
+            print(f"[skip] spmv/{fmt}: no benchmark data")
+            continue
+        configs, labels, matrices, throughput = spmv_slice(df_spmv, fmt)
+        if not matrices:
+            print(f"[skip] spmv/{fmt}: no aligned data")
+            continue
+
+        pp_path = output_dir / f"perfprof_spmv_{fmt}.png"
+        plot_perfprof(configs, labels, throughput, SPMV_BACKEND_COLORS,
                       f'Performance Profile, {label}', pp_path)
 
 

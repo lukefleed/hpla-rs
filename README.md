@@ -40,7 +40,7 @@ Each library is tested in both CSR and CSC
 
 ### Matrix suite
 
-Six symmetric matrices with small or zero mean diagonal, so the Saad estimator on `exp(-A)b` is meaningful at every Krylov dimension.
+Fifteen symmetric matrices with small or zero mean diagonal, so the Saad estimator on `exp(-A)b` is meaningful at every Krylov dimension.
 
 | Matrix | Group | Class |
 |--------|-------|-------|
@@ -50,6 +50,15 @@ Six symmetric matrices with small or zero mean diagonal, so the Saad estimator o
 | `as-Skitter` | SNAP | internet AS topology |
 | `roadNet-CA` | SNAP | road network |
 | `delaunay_n22` | DIMACS10 | Delaunay triangulation |
+| `caidaRouterLevel` | DIMACS10 | router-level topology |
+| `citationCiteseer` | DIMACS10 | citation graph |
+| `coAuthorsCiteseer` | DIMACS10 | co-author graph |
+| `coPapersCiteseer` | DIMACS10 | co-paper graph |
+| `preferentialAttachment` | DIMACS10 | scale-free benchmark graph |
+| `smallworld` | DIMACS10 | small-world benchmark graph |
+| `rgg_n_2_20_s0` | DIMACS10 | random geometric graph |
+| `belgium_osm` | DIMACS10 | OpenStreetMap road network |
+| `auto` | DIMACS10 | Walshaw graph-partitioning benchmark |
 
 ## Setup
 

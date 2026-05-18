@@ -36,6 +36,15 @@ pub const LANCZOS_SUITE: &[&str] = &[
     "as-Skitter",
     "roadNet-CA",
     "delaunay_n22",
+    "caidaRouterLevel",
+    "citationCiteseer",
+    "coAuthorsCiteseer",
+    "coPapersCiteseer",
+    "preferentialAttachment",
+    "smallworld",
+    "rgg_n_2_20_s0",
+    "belgium_osm",
+    "auto",
 ];
 
 use std::fs::File;

@@ -16,3 +16,4 @@ TeX
 AGENTS.md
 .codex
 spack.lock
+*.log
