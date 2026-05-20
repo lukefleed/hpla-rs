@@ -26,7 +26,10 @@ use hpla_rs::lanczos::{
     LanczosWorkspace, ProjectedTridiagonalWorkspace, Reorthogonalization, estimate_spectral_radius,
     lanczos_into,
 };
-use hpla_rs::petsc::{libpetsc_lanczos_execute, libpetsc_lanczos_setup, libpetsc_lanczos_teardown};
+use hpla_rs::petsc::{
+    libpetsc_lanczos_disable_inodes, libpetsc_lanczos_execute, libpetsc_lanczos_setup,
+    libpetsc_lanczos_teardown,
+};
 use hpla_rs::psblas::{
     libpsblas_csc_lanczos_execute, libpsblas_csc_lanczos_setup, libpsblas_csc_lanczos_teardown,
     libpsblas_csr_lanczos_execute, libpsblas_csr_lanczos_setup, libpsblas_csr_lanczos_teardown,
@@ -102,6 +105,9 @@ fn bench_lanczos(c: &mut Criterion) {
         //
         // Scaling by ||b||: folded into the gemv alpha, 0 extra FLOPs.
         // Projected problem exp(-T_m)*e_1: O(m^3), negligible for m << n.
+        // The reported throughput keeps the established asymptotic work
+        // metric; first-step beta and final-step normalization savings are
+        // O(n) lower-order terms and are intentionally not folded into it.
         //
         // Total: m*(2*nnz + 9n) + 2*m*n = m*(2*nnz + 11n)
         group.throughput(Throughput::Elements(
@@ -286,7 +292,7 @@ fn bench_lanczos(c: &mut Criterion) {
         }
 
         // --------------------------------------------------------
-        // PETSc CSR (one-pass Lanczos for exp(-A)b)
+        // PETSc CSR with Inode optimization (one-pass Lanczos for exp(-A)b)
         // --------------------------------------------------------
         unsafe {
             let ctx = libpetsc_lanczos_setup(
@@ -302,7 +308,40 @@ fn bench_lanczos(c: &mut Criterion) {
 
             if !ctx.is_null() {
                 group.bench_with_input(
-                    BenchmarkId::new("petsc_csr", "one_pass"),
+                    BenchmarkId::new("petsc_csr_inodes", "one_pass"),
+                    &(),
+                    |bench, _| {
+                        bench.iter(|| {
+                            libpetsc_lanczos_execute(ctx);
+                            criterion::black_box(ctx);
+                        });
+                    },
+                );
+
+                libpetsc_lanczos_teardown(ctx);
+            }
+        }
+
+        // --------------------------------------------------------
+        // PETSc CSR raw scalar path (one-pass Lanczos for exp(-A)b)
+        // --------------------------------------------------------
+        unsafe {
+            let ctx = libpetsc_lanczos_setup(
+                raw.nrows as i32,
+                raw.ncols as i32,
+                raw.nnz as i32,
+                raw.row_ptr.as_ptr(),
+                raw.col_idx.as_ptr(),
+                raw.values.as_ptr(),
+                b_vec.as_ptr(),
+                krylov_dim as i32,
+            );
+
+            if !ctx.is_null() {
+                libpetsc_lanczos_disable_inodes(ctx);
+
+                group.bench_with_input(
+                    BenchmarkId::new("petsc_csr_raw", "one_pass"),
                     &(),
                     |bench, _| {
                         bench.iter(|| {

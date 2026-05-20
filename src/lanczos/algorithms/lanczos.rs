@@ -30,7 +30,7 @@ pub(crate) fn lanczos_one_pass_into<O: LinOp<f64>>(
     let tolerance = breakdown_tolerance();
     // Cache `||b||` in the workspace so `lanczos_into` can reuse it for the
     // final `x_k = ||b|| V_k g` scaling without a second O(n) sweep.
-    let b_norm = b.norm_l2();
+    let b_norm = b.squared_norm_l2().sqrt();
     ws.set_b_norm(b_norm);
 
     // The one-pass driver never touches `x_k`; the high-level driver writes
@@ -163,7 +163,7 @@ mod tests {
 
         // Clone only the valid prefix of V_k, alphas, and betas so the
         // assertions can own their data and ws goes out of scope cleanly.
-        let b_norm = b.norm_l2();
+        let b_norm = b.squared_norm_l2().sqrt();
         let parts = ws.parts_mut();
         let v_k_trimmed = parts.0.as_ref().get(.., 0..steps_taken).to_owned();
         let alphas = parts.4.clone();

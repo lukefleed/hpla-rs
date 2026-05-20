@@ -82,7 +82,7 @@ LANCZOS_TWO_PASS_CONFIG_ORDER = [
     'faer/two_pass',
     'eigen_csr/two_pass', 'eigen_csc/two_pass',
     'eigen/two_pass',
-    'petsc_csr/two_pass',
+    'petsc_csr_inodes/two_pass', 'petsc_csr_raw/two_pass',
     'psblas_csr/two_pass', 'psblas_csc/two_pass',
 ]
 
@@ -100,7 +100,7 @@ LANCZOS_ONE_PASS_CONFIG_ORDER = [
     'faer/one_pass',
     'eigen_csr/one_pass', 'eigen_csc/one_pass',
     'eigen/one_pass',
-    'petsc_csr/one_pass',
+    'petsc_csr_inodes/one_pass', 'petsc_csr_raw/one_pass',
     'psblas_csr/one_pass', 'psblas_csc/one_pass',
 ]
 
@@ -554,6 +554,12 @@ def parse_lanczos_config(config):
     backend, kernel = config.split('/', 1)
     if '_' not in backend:
         return None
+    parts = backend.split('_')
+    if len(parts) >= 3 and parts[-2] in ('csr', 'csc'):
+        library = '_'.join(parts[:-2])
+        fmt = parts[-2]
+        variant = parts[-1]
+        return f'{library}_{variant}', fmt, kernel
     library, fmt = backend.rsplit('_', 1)
     if fmt not in ('csr', 'csc'):
         return None

@@ -28,7 +28,7 @@ pub(crate) fn lanczos_pass_one_into<O: LinOp<f64>>(
     par: Par,
     stack: &mut MemStack,
 ) -> Result<usize, LanczosError> {
-    let b_norm = b.norm_l2();
+    let b_norm = b.squared_norm_l2().sqrt();
     ws.set_b_norm(b_norm);
 
     let tolerance = breakdown_tolerance();

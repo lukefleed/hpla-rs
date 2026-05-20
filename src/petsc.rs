@@ -43,7 +43,7 @@ unsafe extern "C" {
         b: *const c_double,
         krylov_dim: i32,
     ) -> *mut PetscLanczos;
-
+    pub fn libpetsc_lanczos_disable_inodes(ctx: *mut PetscLanczos);
     pub fn libpetsc_lanczos_execute(ctx: *mut PetscLanczos);
     pub fn libpetsc_lanczos_get_y(ctx: *mut PetscLanczos, out: *mut c_double, len: i32);
     pub fn libpetsc_lanczos_teardown(ctx: *mut PetscLanczos);
@@ -66,7 +66,7 @@ unsafe extern "C" {
         b: *const c_double,
         krylov_dim: i32,
     ) -> *mut PetscLanczosTwoPass;
-
+    pub fn libpetsc_lanczos_two_pass_disable_inodes(ctx: *mut PetscLanczosTwoPass);
     pub fn libpetsc_lanczos_two_pass_execute(ctx: *mut PetscLanczosTwoPass);
     pub fn libpetsc_lanczos_two_pass_get_y(
         ctx: *mut PetscLanczosTwoPass,

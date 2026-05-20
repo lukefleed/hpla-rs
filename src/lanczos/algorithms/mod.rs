@@ -52,12 +52,12 @@ pub fn lanczos_scratch(operator: &impl LinOp<f64>, par: Par) -> StackReq {
 
 /// Computes the unnormalized Lanczos residual
 /// `w = A v_curr - alpha v_curr - beta_prev v_prev` and returns `alpha`, the
-/// Rayleigh quotient `<v_curr, A v_curr>` taken before the `alpha v_curr`
-/// subtraction. The norm `beta = ||w||` and the breakdown check are left to
-/// the caller, so an optional reorthogonalization pass over `w` (including
-/// over `v_curr` itself; in exact arithmetic the component is already zero)
-/// feeds one coherent `beta` into both the stored tridiagonal and the
-/// iterator's `beta_prev`.
+/// Rayleigh quotient after the previous-vector recurrence term has been
+/// removed and before the `alpha v_curr` subtraction. The norm `beta = ||w||`
+/// and the breakdown check are left to the caller, so an optional
+/// reorthogonalization pass over `w` (including over `v_curr` itself; in exact
+/// arithmetic the component is already zero) feeds one coherent `beta` into
+/// both the stored tridiagonal and the iterator's `beta_prev`.
 pub(crate) fn lanczos_recurrence_step<O: LinOp<f64>>(
     operator: &O,
     mut w: MatMut<'_, f64>,
@@ -73,11 +73,19 @@ pub(crate) fn lanczos_recurrence_step<O: LinOp<f64>>(
     let one_val = 1.0_f64;
     let one_mat = unsafe { MatRef::<f64>::from_raw_parts(&one_val, 1, 1, 1, 1) };
 
-    // w -= beta_prev * v_prev  (SIMD via matvec_colmajor fast-path)
-    matmul(w.rb_mut(), Accum::Add, v_prev, one_mat, -beta_prev, par);
-
-    // alpha = <v_curr, w>  (4-way SIMD-unrolled dot product)
-    let alpha: f64 = inner_prod(v_curr.col(0).transpose(), Conj::No, w.rb().col(0), Conj::No);
+    debug_assert!(beta_prev >= 0.0, "beta_prev must be a residual norm");
+    let alpha: f64 = if beta_prev > 0.0 {
+        let mut alpha = 0.0_f64;
+        zip!(w.rb_mut(), v_prev, v_curr).for_each(|unzip!(w_i, v_prev_i, v_curr_i)| {
+            let w_new = *w_i - beta_prev * *v_prev_i;
+            *w_i = w_new;
+            alpha += *v_curr_i * w_new;
+        });
+        alpha
+    } else {
+        // alpha = <v_curr, w>  (4-way SIMD-unrolled dot product)
+        inner_prod(v_curr.col(0).transpose(), Conj::No, w.rb().col(0), Conj::No)
+    };
 
     // w -= alpha * v_curr  (SIMD via matvec_colmajor fast-path)
     matmul(w.rb_mut(), Accum::Add, v_curr, one_mat, -alpha, par);
@@ -108,7 +116,7 @@ pub(crate) struct LanczosIteration<'a, 'ws, O: LinOp<f64>> {
 
 impl<'a, 'ws, O: LinOp<f64>> LanczosIteration<'a, 'ws, O> {
     /// Writes `v_1 = b / ||b||` into the provided `v_curr` buffer, zeros the
-    /// provided `v_prev` and `work` buffers, and seeds the iterator state.
+    /// provided `v_prev` buffer, and seeds the iterator state.
     /// The caller is responsible for precomputing `b_norm = ||b||_2` so this
     /// constructor does not pay a second O(n) sweep; the high-level driver
     /// caches it in the workspace for downstream consumers.
@@ -146,7 +154,6 @@ impl<'a, 'ws, O: LinOp<f64>> LanczosIteration<'a, 'ws, O> {
         let inv_norm = b_norm.recip();
 
         zip!(v_prev.as_mut()).for_each(|unzip!(x)| *x = 0.0);
-        zip!(work.as_mut()).for_each(|unzip!(x)| *x = 0.0);
         zip!(v_curr.as_mut(), b).for_each(|unzip!(v, b_i)| *v = *b_i * inv_norm);
 
         Ok(Self {
@@ -174,9 +181,9 @@ impl<'a, 'ws, O: LinOp<f64>> LanczosIteration<'a, 'ws, O> {
     }
 
     /// One step, letting `reortho` correct the unnormalized residual `w`
-    /// before `beta = ||w||` is derived. The returned `beta` and the stored
-    /// `beta_prev` both reflect the corrected `w`, keeping the tridiagonal
-    /// consistent with the next recurrence step.
+    /// before `beta = ||w||` is derived. The returned `beta` always reflects
+    /// the corrected `w`; when another step will run, the stored `beta_prev`
+    /// is updated from the same value so the recurrence stays consistent.
     pub(crate) fn next_step_with<F>(
         &mut self,
         stack: &mut MemStack,
@@ -201,7 +208,7 @@ impl<'a, 'ws, O: LinOp<f64>> LanczosIteration<'a, 'ws, O> {
 
         reortho(self.work.as_mut());
 
-        let beta = self.work.as_ref().norm_l2();
+        let beta = self.work.as_ref().squared_norm_l2().sqrt();
         self.k += 1;
 
         if beta <= self.tolerance {
@@ -209,6 +216,10 @@ impl<'a, 'ws, O: LinOp<f64>> LanczosIteration<'a, 'ws, O> {
             // span(V_j) to working precision. Leave v_prev / v_curr / work
             // untouched and return zero beta so the caller terminates.
             return Some(LanczosStep { alpha, beta: 0.0 });
+        }
+
+        if self.k == self.max_k {
+            return Some(LanczosStep { alpha, beta });
         }
 
         let inv_beta = beta.recip();

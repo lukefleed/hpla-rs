@@ -23,8 +23,8 @@ use hpla_rs::lanczos::{
     lanczos_two_pass_into,
 };
 use hpla_rs::petsc::{
-    libpetsc_lanczos_two_pass_execute, libpetsc_lanczos_two_pass_setup,
-    libpetsc_lanczos_two_pass_teardown,
+    libpetsc_lanczos_two_pass_disable_inodes, libpetsc_lanczos_two_pass_execute,
+    libpetsc_lanczos_two_pass_setup, libpetsc_lanczos_two_pass_teardown,
 };
 use hpla_rs::psblas::{
     libpsblas_csc_lanczos_two_pass_execute, libpsblas_csc_lanczos_two_pass_setup,
@@ -108,6 +108,9 @@ fn bench_lanczos_two_pass(c: &mut Criterion) {
         //
         // Total: k*(2*nnz + 9n) + (k-1)*(2*nnz + 7n)
         //      = (4k-2)*nnz + (16k-7)*n
+        // The reported throughput keeps the established asymptotic work
+        // metric; first-step beta and final-step normalization savings are
+        // O(n) lower-order terms and are intentionally not folded into it.
         //      ≈ 4k*(nnz + 4n)   for k >> 1 (lower-order terms dropped)
         group.throughput(Throughput::Elements(
             4 * krylov_dim as u64 * (raw.nnz as u64 + 4 * raw.nrows as u64),
@@ -228,7 +231,7 @@ fn bench_lanczos_two_pass(c: &mut Criterion) {
         }
 
         // --------------------------------------------------------
-        // PETSc CSR (two-pass Lanczos for exp(-A)b)
+        // PETSc CSR with Inode optimization (two-pass Lanczos for exp(-A)b)
         // --------------------------------------------------------
         unsafe {
             let ctx = libpetsc_lanczos_two_pass_setup(
@@ -244,7 +247,40 @@ fn bench_lanczos_two_pass(c: &mut Criterion) {
 
             if !ctx.is_null() {
                 group.bench_with_input(
-                    BenchmarkId::new("petsc_csr", "two_pass"),
+                    BenchmarkId::new("petsc_csr_inodes", "two_pass"),
+                    &(),
+                    |bench, _| {
+                        bench.iter(|| {
+                            libpetsc_lanczos_two_pass_execute(ctx);
+                            criterion::black_box(ctx);
+                        });
+                    },
+                );
+
+                libpetsc_lanczos_two_pass_teardown(ctx);
+            }
+        }
+
+        // --------------------------------------------------------
+        // PETSc CSR raw scalar path (two-pass Lanczos for exp(-A)b)
+        // --------------------------------------------------------
+        unsafe {
+            let ctx = libpetsc_lanczos_two_pass_setup(
+                raw.nrows as i32,
+                raw.ncols as i32,
+                raw.nnz as i32,
+                raw.row_ptr.as_ptr(),
+                raw.col_idx.as_ptr(),
+                raw.values.as_ptr(),
+                b_vec.as_ptr(),
+                krylov_dim as i32,
+            );
+
+            if !ctx.is_null() {
+                libpetsc_lanczos_two_pass_disable_inodes(ctx);
+
+                group.bench_with_input(
+                    BenchmarkId::new("petsc_csr_raw", "two_pass"),
                     &(),
                     |bench, _| {
                         bench.iter(|| {
