@@ -26,10 +26,7 @@ use hpla_rs::lanczos::{
     LanczosWorkspace, ProjectedTridiagonalWorkspace, Reorthogonalization, estimate_spectral_radius,
     lanczos_into,
 };
-use hpla_rs::petsc::{
-    libpetsc_lanczos_disable_inodes, libpetsc_lanczos_execute, libpetsc_lanczos_setup,
-    libpetsc_lanczos_teardown,
-};
+use hpla_rs::petsc::{libpetsc_lanczos_execute, libpetsc_lanczos_setup, libpetsc_lanczos_teardown};
 use hpla_rs::psblas::{
     libpsblas_csc_lanczos_execute, libpsblas_csc_lanczos_setup, libpsblas_csc_lanczos_teardown,
     libpsblas_csr_lanczos_execute, libpsblas_csr_lanczos_setup, libpsblas_csr_lanczos_teardown,
@@ -292,7 +289,7 @@ fn bench_lanczos(c: &mut Criterion) {
         }
 
         // --------------------------------------------------------
-        // PETSc CSR with Inode optimization (one-pass Lanczos for exp(-A)b)
+        // PETSc CSR one-pass Lanczos for exp(-A)b
         // --------------------------------------------------------
         unsafe {
             let ctx = libpetsc_lanczos_setup(
@@ -308,40 +305,7 @@ fn bench_lanczos(c: &mut Criterion) {
 
             if !ctx.is_null() {
                 group.bench_with_input(
-                    BenchmarkId::new("petsc_csr_inodes", "one_pass"),
-                    &(),
-                    |bench, _| {
-                        bench.iter(|| {
-                            libpetsc_lanczos_execute(ctx);
-                            criterion::black_box(ctx);
-                        });
-                    },
-                );
-
-                libpetsc_lanczos_teardown(ctx);
-            }
-        }
-
-        // --------------------------------------------------------
-        // PETSc CSR raw scalar path (one-pass Lanczos for exp(-A)b)
-        // --------------------------------------------------------
-        unsafe {
-            let ctx = libpetsc_lanczos_setup(
-                raw.nrows as i32,
-                raw.ncols as i32,
-                raw.nnz as i32,
-                raw.row_ptr.as_ptr(),
-                raw.col_idx.as_ptr(),
-                raw.values.as_ptr(),
-                b_vec.as_ptr(),
-                krylov_dim as i32,
-            );
-
-            if !ctx.is_null() {
-                libpetsc_lanczos_disable_inodes(ctx);
-
-                group.bench_with_input(
-                    BenchmarkId::new("petsc_csr_raw", "one_pass"),
+                    BenchmarkId::new("petsc_csr", "one_pass"),
                     &(),
                     |bench, _| {
                         bench.iter(|| {

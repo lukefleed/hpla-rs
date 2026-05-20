@@ -2,7 +2,7 @@
 //!
 //! Exposes external C functions for CSR SpMV via PETSc.
 
-use std::os::raw::{c_double, c_int};
+use std::os::raw::c_double;
 
 /// Opaque struct representing the C-side internal context (Mat, Vecs).
 #[repr(C)]
@@ -18,7 +18,6 @@ unsafe extern "C" {
         row_ptr: *const i32,
         col_idx: *const i32,
         values: *const c_double,
-        disable_inode: c_int,
     ) -> *mut PetscSpmv;
 
     pub fn libpetsc_spmv_execute(ctx: *mut PetscSpmv);
@@ -43,7 +42,6 @@ unsafe extern "C" {
         b: *const c_double,
         krylov_dim: i32,
     ) -> *mut PetscLanczos;
-    pub fn libpetsc_lanczos_disable_inodes(ctx: *mut PetscLanczos);
     pub fn libpetsc_lanczos_execute(ctx: *mut PetscLanczos);
     pub fn libpetsc_lanczos_get_y(ctx: *mut PetscLanczos, out: *mut c_double, len: i32);
     pub fn libpetsc_lanczos_teardown(ctx: *mut PetscLanczos);
@@ -66,7 +64,6 @@ unsafe extern "C" {
         b: *const c_double,
         krylov_dim: i32,
     ) -> *mut PetscLanczosTwoPass;
-    pub fn libpetsc_lanczos_two_pass_disable_inodes(ctx: *mut PetscLanczosTwoPass);
     pub fn libpetsc_lanczos_two_pass_execute(ctx: *mut PetscLanczosTwoPass);
     pub fn libpetsc_lanczos_two_pass_get_y(
         ctx: *mut PetscLanczosTwoPass,

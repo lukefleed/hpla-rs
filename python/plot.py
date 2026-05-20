@@ -65,7 +65,7 @@ SPMV_CSC_BACKENDS = {'faer/csc', 'eigen/csc_map', 'mkl/csc_ie', 'psblas/csc'}
 SPMV_CONFIG_ORDER = [
     'faer/csc', 'faer/csr',
     'eigen/csc_map', 'eigen/csr_map',
-    'petsc/csr_inodes', 'petsc/csr_raw',
+    'petsc/csr',
     'psblas/csr', 'psblas/csc',
     'mkl/csr_ie', 'mkl/csc_ie',
 ]
@@ -82,7 +82,7 @@ LANCZOS_TWO_PASS_CONFIG_ORDER = [
     'faer/two_pass',
     'eigen_csr/two_pass', 'eigen_csc/two_pass',
     'eigen/two_pass',
-    'petsc_csr_inodes/two_pass', 'petsc_csr_raw/two_pass',
+    'petsc_csr/two_pass',
     'psblas_csr/two_pass', 'psblas_csc/two_pass',
 ]
 
@@ -100,7 +100,7 @@ LANCZOS_ONE_PASS_CONFIG_ORDER = [
     'faer/one_pass',
     'eigen_csr/one_pass', 'eigen_csc/one_pass',
     'eigen/one_pass',
-    'petsc_csr_inodes/one_pass', 'petsc_csr_raw/one_pass',
+    'petsc_csr/one_pass',
     'psblas_csr/one_pass', 'psblas_csc/one_pass',
 ]
 
@@ -267,7 +267,9 @@ def plot_roofline(df, matrix_dims, hw_config, output_dir, config_order,
 
     stream_bw = hw_config['stream_triad_GBs']
 
-    backends = [b for b in config_order if b in df['Configuration'].values]
+    present = set(df['Configuration'].unique())
+    backends = [b for b in config_order if b in present]
+    df = df[df['Configuration'].isin(backends)].copy()
     matrices = sorted(df['Matrix'].unique())
 
     bc = {b: backend_colors.get(b, '#999999') for b in backends}
@@ -398,12 +400,13 @@ def generate_plots(df, output_dir, config_order, backend_colors,
     for matrix in matrices:
         matrix_df = df[df['Matrix'] == matrix].copy()
 
-        # Only include configs that appear in the ordering; append any
-        # unexpected ones at the end so nothing is silently dropped.
         present = set(matrix_df['Configuration'])
         ordered = [c for c in config_order if c in present]
-        extra = sorted(present - set(ordered))
-        full_order = ordered + extra
+        if not ordered:
+            continue
+
+        matrix_df = matrix_df[matrix_df['Configuration'].isin(ordered)].copy()
+        full_order = ordered
 
         matrix_df['Config_Cat'] = pd.Categorical(
             matrix_df['Configuration'], categories=full_order, ordered=True,
@@ -573,8 +576,17 @@ def lanczos_slice(df, kernel, fmt):
     missing data for any library in the slice are dropped, so all four
     return values are aligned and free of NaNs.
     """
+    active_order = (
+        LANCZOS_ONE_PASS_CONFIG_ORDER
+        if kernel == 'one_pass'
+        else LANCZOS_TWO_PASS_CONFIG_ORDER
+    )
     pairs = []
-    for cfg in sorted(df['Configuration'].unique()):
+    present = set(df['Configuration'].unique())
+
+    for cfg in active_order:
+        if cfg not in present:
+            continue
         parsed = parse_lanczos_config(cfg)
         if parsed is None:
             continue
@@ -671,7 +683,7 @@ def parse_spmv_config(config):
     """Parse a SpMV configuration string into (library, format, variant).
 
     SpMV backend ids follow ``"<library>/<fmt>[_<variant>]"``, e.g.
-    ``"petsc/csr_inodes"`` -> ``("petsc", "csr", "inodes")`` and
+    ``"mkl/csr_ie"`` -> ``("mkl", "csr", "ie")`` and
     ``"faer/csr"`` -> ``("faer", "csr", None)``.  Returns ``None`` for
     strings that do not match.
     """
@@ -693,10 +705,13 @@ def spmv_slice(df, fmt):
     all backends in the slice; matrices missing data for any backend
     are dropped.  Labels collapse to the library name when a single
     variant exists, falling back to ``"<library> (<variant>)"`` when a
-    library exposes more than one (e.g. petsc inodes vs raw on CSR).
+    library exposes more than one configured variant.
     """
     pairs = []
-    for cfg in sorted(df['Configuration'].unique()):
+    present = set(df['Configuration'].unique())
+    for cfg in SPMV_CONFIG_ORDER:
+        if cfg not in present:
+            continue
         parsed = parse_spmv_config(cfg)
         if parsed is None:
             continue

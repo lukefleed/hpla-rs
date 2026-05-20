@@ -123,11 +123,6 @@ PetscLanczosCtx* libpetsc_lanczos_setup(
     return ctx;
 }
 
-void libpetsc_lanczos_disable_inodes(PetscLanczosCtx *ctx) {
-    if (!ctx) return;
-    MatSetOption(ctx->A, MAT_USE_INODES, PETSC_FALSE);
-}
-
 void libpetsc_lanczos_execute(PetscLanczosCtx *ctx) {
     if (!ctx || ctx->n <= 0 || ctx->krylov_dim <= 0) {
         if (ctx) { VecSet(ctx->x, 0.0); ctx->steps_taken = 0; }

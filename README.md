@@ -18,8 +18,7 @@ The two Lanczos variants compute the same result. The difference is memory vs co
 |---------|---------|--------|----------|
 | `faer/csc` | faer | CSC | Rust |
 | `faer/csr` | faer | CSR | Rust |
-| `petsc/csr_inodes` | PETSc | CSR + Inode | C |
-| `petsc/csr_raw` | PETSc | CSR scalar | C |
+| `petsc/csr` | PETSc | CSR | C |
 | `eigen/csc_map` | Eigen | CSC | C++ |
 | `eigen/csr_map` | Eigen | CSR | C++ |
 | `mkl/csr_ie` | Intel MKL | CSR IE | C |

@@ -90,30 +90,6 @@ fn bench_spmv(c: &mut Criterion) {
         });
 
         // ----------------------------------------------------
-        // PETSc (Inodes)
-        // ----------------------------------------------------
-        unsafe {
-            let ctx = libpetsc_spmv_setup(
-                raw.nrows as i32,
-                raw.ncols as i32,
-                raw.nnz as i32,
-                raw.row_ptr.as_ptr(),
-                raw.col_idx.as_ptr(),
-                raw.values.as_ptr(),
-                0, // inodes enabled
-            );
-
-            group.bench_with_input(BenchmarkId::new("petsc", "csr_inodes"), &(), |b, _| {
-                b.iter(|| {
-                    libpetsc_spmv_execute(ctx);
-                    criterion::black_box(ctx);
-                });
-            });
-
-            libpetsc_spmv_teardown(ctx);
-        }
-
-        // ----------------------------------------------------
         // PETSc
         // ----------------------------------------------------
         unsafe {
@@ -124,10 +100,9 @@ fn bench_spmv(c: &mut Criterion) {
                 raw.row_ptr.as_ptr(),
                 raw.col_idx.as_ptr(),
                 raw.values.as_ptr(),
-                1, // inodes disabled
             );
 
-            group.bench_with_input(BenchmarkId::new("petsc", "csr_raw"), &(), |b, _| {
+            group.bench_with_input(BenchmarkId::new("petsc", "csr"), &(), |b, _| {
                 b.iter(|| {
                     libpetsc_spmv_execute(ctx);
                     criterion::black_box(ctx);

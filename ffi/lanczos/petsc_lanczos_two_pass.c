@@ -122,11 +122,6 @@ PetscLanczosTwoPassCtx* libpetsc_lanczos_two_pass_setup(
     return ctx;
 }
 
-void libpetsc_lanczos_two_pass_disable_inodes(PetscLanczosTwoPassCtx *ctx) {
-    if (!ctx) return;
-    MatSetOption(ctx->A, MAT_USE_INODES, PETSC_FALSE);
-}
-
 void libpetsc_lanczos_two_pass_execute(PetscLanczosTwoPassCtx *ctx) {
     if (!ctx || ctx->n <= 0 || ctx->krylov_dim <= 0) {
         if (ctx) { VecSet(ctx->x, 0.0); ctx->steps_taken = 0; }

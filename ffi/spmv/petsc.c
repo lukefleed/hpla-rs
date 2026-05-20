@@ -29,8 +29,7 @@ PetscBenchContext* libpetsc_spmv_setup(
     int32_t nnz,
     const int32_t *row_ptr,
     const int32_t *col_idx,
-    const double *values,
-    int disable_inode)
+    const double *values)
 {
     PetscBool initialized;
     PetscInitialized(&initialized);
@@ -52,10 +51,6 @@ PetscBenchContext* libpetsc_spmv_setup(
     // PETSc API does not declare these parameters const; the zero-copy
     // contract guarantees PETSc will not modify the caller's arrays.
     MatCreateSeqAIJWithArrays(PETSC_COMM_SELF, nrows, ncols, (PetscInt*)row_ptr, (PetscInt*)col_idx, (PetscScalar*)values, &ctx->A);
-
-    if (disable_inode) {
-        MatSetOption(ctx->A, MAT_USE_INODES, PETSC_FALSE);
-    }
 
     return ctx;
 }

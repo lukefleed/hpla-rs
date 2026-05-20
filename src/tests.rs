@@ -69,7 +69,7 @@ fn test_backend_numerical_equivalence() -> anyhow::Result<()> {
             assert!(err < tol, "{name}: faer/csr diverged: rel L2 = {err:.2e}");
         }
 
-        // --- PETSc (CSR, inodes disabled) ---
+        // --- PETSc (CSR) ---
         {
             let mut y_buf = vec![0.0f64; raw.nrows];
             unsafe {
@@ -80,43 +80,14 @@ fn test_backend_numerical_equivalence() -> anyhow::Result<()> {
                     raw.row_ptr.as_ptr(),
                     raw.col_idx.as_ptr(),
                     raw.values.as_ptr(),
-                    1, // disable inodes
                 );
                 crate::petsc::libpetsc_spmv_execute(ctx);
                 crate::petsc::libpetsc_spmv_get_y(ctx, y_buf.as_mut_ptr(), raw.nrows as i32);
                 crate::petsc::libpetsc_spmv_teardown(ctx);
             }
             let err = relative_l2_error(&y_buf, &faer_ref);
-            eprintln!("  petsc/csr_raw:    rel L2 = {err:.2e}");
-            assert!(
-                err < tol,
-                "{name}: petsc/csr_raw diverged: rel L2 = {err:.2e}"
-            );
-        }
-
-        // --- PETSc (CSR, inodes enabled) ---
-        {
-            let mut y_buf = vec![0.0f64; raw.nrows];
-            unsafe {
-                let ctx = crate::petsc::libpetsc_spmv_setup(
-                    raw.nrows as i32,
-                    raw.ncols as i32,
-                    raw.nnz as i32,
-                    raw.row_ptr.as_ptr(),
-                    raw.col_idx.as_ptr(),
-                    raw.values.as_ptr(),
-                    0, // enable inodes
-                );
-                crate::petsc::libpetsc_spmv_execute(ctx);
-                crate::petsc::libpetsc_spmv_get_y(ctx, y_buf.as_mut_ptr(), raw.nrows as i32);
-                crate::petsc::libpetsc_spmv_teardown(ctx);
-            }
-            let err = relative_l2_error(&y_buf, &faer_ref);
-            eprintln!("  petsc/csr_inodes: rel L2 = {err:.2e}");
-            assert!(
-                err < tol,
-                "{name}: petsc/csr_inodes diverged: rel L2 = {err:.2e}"
-            );
+            eprintln!("  petsc/csr:        rel L2 = {err:.2e}");
+            assert!(err < tol, "{name}: petsc/csr diverged: rel L2 = {err:.2e}");
         }
 
         // --- Eigen (CSC) ---
@@ -540,8 +511,8 @@ fn test_lanczos_backend_equivalence() -> anyhow::Result<()> {
     };
     use crate::psblas::{
         libpsblas_csc_lanczos_execute, libpsblas_csc_lanczos_get_y, libpsblas_csc_lanczos_setup,
-        libpsblas_csc_lanczos_teardown, libpsblas_csr_lanczos_execute,
-        libpsblas_csr_lanczos_get_y, libpsblas_csr_lanczos_setup, libpsblas_csr_lanczos_teardown,
+        libpsblas_csc_lanczos_teardown, libpsblas_csr_lanczos_execute, libpsblas_csr_lanczos_get_y,
+        libpsblas_csr_lanczos_setup, libpsblas_csr_lanczos_teardown,
     };
 
     let tol = 1e-8;
