@@ -22,6 +22,7 @@ use hpla_rs::psblas::{
 };
 use hpla_rs::{load_mtx_raw, spmv_faer, spmv_faer_csr};
 use std::fs;
+use std::hint::black_box;
 use std::path::PathBuf;
 
 /// Discovers Matrix Market `.mtx` files available for benchmarking.
@@ -71,7 +72,7 @@ fn bench_spmv(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("faer", "csc"), &(), |b, _| {
             b.iter(|| {
                 spmv_faer(&a_faer, &x_faer, &mut y_faer);
-                criterion::black_box(&mut y_faer);
+                black_box(&mut y_faer);
             });
         });
 
@@ -85,7 +86,7 @@ fn bench_spmv(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("faer", "csr"), &(), |b, _| {
             b.iter(|| {
                 spmv_faer_csr(&a_faer_csr, &x_faer, &mut y_faer_csr);
-                criterion::black_box(&mut y_faer_csr);
+                black_box(&mut y_faer_csr);
             });
         });
 
@@ -105,7 +106,7 @@ fn bench_spmv(c: &mut Criterion) {
             group.bench_with_input(BenchmarkId::new("petsc", "csr"), &(), |b, _| {
                 b.iter(|| {
                     libpetsc_spmv_execute(ctx);
-                    criterion::black_box(ctx);
+                    black_box(ctx);
                 });
             });
 
@@ -128,7 +129,7 @@ fn bench_spmv(c: &mut Criterion) {
             group.bench_with_input(BenchmarkId::new("mkl", "csr_ie"), &(), |b, _| {
                 b.iter(|| {
                     libmkl_spmv_execute(ctx);
-                    criterion::black_box(ctx);
+                    black_box(ctx);
                 });
             });
 
@@ -151,7 +152,7 @@ fn bench_spmv(c: &mut Criterion) {
             group.bench_with_input(BenchmarkId::new("mkl", "csc_ie"), &(), |b, _| {
                 b.iter(|| {
                     libmkl_csc_spmv_execute(ctx);
-                    criterion::black_box(ctx);
+                    black_box(ctx);
                 });
             });
 
@@ -174,7 +175,7 @@ fn bench_spmv(c: &mut Criterion) {
             group.bench_with_input(BenchmarkId::new("eigen", "csc_map"), &(), |b, _| {
                 b.iter(|| {
                     libeigen_spmv_execute(ctx);
-                    criterion::black_box(ctx);
+                    black_box(ctx);
                 });
             });
 
@@ -197,7 +198,7 @@ fn bench_spmv(c: &mut Criterion) {
             group.bench_with_input(BenchmarkId::new("eigen", "csr_map"), &(), |b, _| {
                 b.iter(|| {
                     libeigen_csr_spmv_execute(ctx);
-                    criterion::black_box(ctx);
+                    black_box(ctx);
                 });
             });
 
@@ -220,7 +221,7 @@ fn bench_spmv(c: &mut Criterion) {
             group.bench_with_input(BenchmarkId::new("psblas", "csr"), &(), |b, _| {
                 b.iter(|| {
                     libpsblas_spmv_execute(ctx);
-                    criterion::black_box(ctx);
+                    black_box(ctx);
                 });
             });
 
@@ -243,7 +244,7 @@ fn bench_spmv(c: &mut Criterion) {
             group.bench_with_input(BenchmarkId::new("psblas", "csc"), &(), |b, _| {
                 b.iter(|| {
                     libpsblas_spmv_execute(ctx);
-                    criterion::black_box(ctx);
+                    black_box(ctx);
                 });
             });
 

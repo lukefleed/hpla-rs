@@ -370,20 +370,17 @@ fn test_lanczos_two_pass_backend_equivalence() -> anyhow::Result<()> {
                     b_vec.as_ptr(),
                     krylov_dim as i32,
                 );
-                if ctx.is_null() {
-                    eprintln!("  eigen/two_pass:   skipped (stub returned null)");
-                } else {
-                    libeigen_lanczos_two_pass_execute(ctx);
-                    libeigen_lanczos_two_pass_get_y(ctx, y_buf.as_mut_ptr(), raw.nrows as i32);
-                    libeigen_lanczos_two_pass_teardown(ctx);
+                anyhow::ensure!(!ctx.is_null(), "{name}: eigen/two_pass setup returned null");
+                libeigen_lanczos_two_pass_execute(ctx);
+                libeigen_lanczos_two_pass_get_y(ctx, y_buf.as_mut_ptr(), raw.nrows as i32);
+                libeigen_lanczos_two_pass_teardown(ctx);
 
-                    let err = relative_l2_error(&y_buf, &faer_ref);
-                    eprintln!("  eigen/two_pass:   rel L2 = {err:.2e}");
-                    assert!(
-                        err < tol,
-                        "{name}: eigen/two_pass diverged: rel L2 = {err:.2e}"
-                    );
-                }
+                let err = relative_l2_error(&y_buf, &faer_ref);
+                eprintln!("  eigen/two_pass:   rel L2 = {err:.2e}");
+                assert!(
+                    err < tol,
+                    "{name}: eigen/two_pass diverged: rel L2 = {err:.2e}"
+                );
             }
         }
 
@@ -401,20 +398,20 @@ fn test_lanczos_two_pass_backend_equivalence() -> anyhow::Result<()> {
                     b_vec.as_ptr(),
                     krylov_dim as i32,
                 );
-                if ctx.is_null() {
-                    eprintln!("  eigen_csc/two_pass: skipped (stub returned null)");
-                } else {
-                    libeigen_csc_lanczos_two_pass_execute(ctx);
-                    libeigen_csc_lanczos_two_pass_get_y(ctx, y_buf.as_mut_ptr(), raw.nrows as i32);
-                    libeigen_csc_lanczos_two_pass_teardown(ctx);
+                anyhow::ensure!(
+                    !ctx.is_null(),
+                    "{name}: eigen_csc/two_pass setup returned null"
+                );
+                libeigen_csc_lanczos_two_pass_execute(ctx);
+                libeigen_csc_lanczos_two_pass_get_y(ctx, y_buf.as_mut_ptr(), raw.nrows as i32);
+                libeigen_csc_lanczos_two_pass_teardown(ctx);
 
-                    let err = relative_l2_error(&y_buf, &faer_ref);
-                    eprintln!("  eigen_csc/two_pass: rel L2 = {err:.2e}");
-                    assert!(
-                        err < tol,
-                        "{name}: eigen_csc/two_pass diverged: rel L2 = {err:.2e}"
-                    );
-                }
+                let err = relative_l2_error(&y_buf, &faer_ref);
+                eprintln!("  eigen_csc/two_pass: rel L2 = {err:.2e}");
+                assert!(
+                    err < tol,
+                    "{name}: eigen_csc/two_pass diverged: rel L2 = {err:.2e}"
+                );
             }
         }
 
@@ -432,20 +429,20 @@ fn test_lanczos_two_pass_backend_equivalence() -> anyhow::Result<()> {
                     b_vec.as_ptr(),
                     krylov_dim as i32,
                 );
-                if ctx.is_null() {
-                    eprintln!("  psblas_csr/two_pass:  skipped (stub returned null)");
-                } else {
-                    libpsblas_csr_lanczos_two_pass_execute(ctx);
-                    libpsblas_csr_lanczos_two_pass_get_y(ctx, y_buf.as_mut_ptr(), raw.nrows as i32);
-                    libpsblas_csr_lanczos_two_pass_teardown(ctx);
+                anyhow::ensure!(
+                    !ctx.is_null(),
+                    "{name}: psblas_csr/two_pass setup returned null"
+                );
+                libpsblas_csr_lanczos_two_pass_execute(ctx);
+                libpsblas_csr_lanczos_two_pass_get_y(ctx, y_buf.as_mut_ptr(), raw.nrows as i32);
+                libpsblas_csr_lanczos_two_pass_teardown(ctx);
 
-                    let err = relative_l2_error(&y_buf, &faer_ref);
-                    eprintln!("  psblas_csr/two_pass:  rel L2 = {err:.2e}");
-                    assert!(
-                        err < tol,
-                        "{name}: psblas_csr/two_pass diverged: rel L2 = {err:.2e}"
-                    );
-                }
+                let err = relative_l2_error(&y_buf, &faer_ref);
+                eprintln!("  psblas_csr/two_pass:  rel L2 = {err:.2e}");
+                assert!(
+                    err < tol,
+                    "{name}: psblas_csr/two_pass diverged: rel L2 = {err:.2e}"
+                );
             }
         }
 
@@ -463,20 +460,20 @@ fn test_lanczos_two_pass_backend_equivalence() -> anyhow::Result<()> {
                     b_vec.as_ptr(),
                     krylov_dim as i32,
                 );
-                if ctx.is_null() {
-                    eprintln!("  psblas_csc/two_pass:  skipped (stub returned null)");
-                } else {
-                    libpsblas_csc_lanczos_two_pass_execute(ctx);
-                    libpsblas_csc_lanczos_two_pass_get_y(ctx, y_buf.as_mut_ptr(), raw.nrows as i32);
-                    libpsblas_csc_lanczos_two_pass_teardown(ctx);
+                anyhow::ensure!(
+                    !ctx.is_null(),
+                    "{name}: psblas_csc/two_pass setup returned null"
+                );
+                libpsblas_csc_lanczos_two_pass_execute(ctx);
+                libpsblas_csc_lanczos_two_pass_get_y(ctx, y_buf.as_mut_ptr(), raw.nrows as i32);
+                libpsblas_csc_lanczos_two_pass_teardown(ctx);
 
-                    let err = relative_l2_error(&y_buf, &faer_ref);
-                    eprintln!("  psblas_csc/two_pass:  rel L2 = {err:.2e}");
-                    assert!(
-                        err < tol,
-                        "{name}: psblas_csc/two_pass diverged: rel L2 = {err:.2e}"
-                    );
-                }
+                let err = relative_l2_error(&y_buf, &faer_ref);
+                eprintln!("  psblas_csc/two_pass:  rel L2 = {err:.2e}");
+                assert!(
+                    err < tol,
+                    "{name}: psblas_csc/two_pass diverged: rel L2 = {err:.2e}"
+                );
             }
         }
     }
@@ -489,10 +486,8 @@ fn test_lanczos_two_pass_backend_equivalence() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Checks that the PSBLAS one-pass Lanczos produces the same exp(-A)b
-/// as the Faer one-pass reference. Runs on every matrix in
-/// [`crate::LANCZOS_SUITE`] that is present on disk. Skips gracefully if
-/// the PSBLAS stub returns a null context.
+/// Checks that the one-pass Lanczos backends produce the same exp(-A)b
+/// as the Faer one-pass reference on every available matrix.
 #[test]
 fn test_lanczos_backend_equivalence() -> anyhow::Result<()> {
     use faer::Par;
@@ -634,20 +629,17 @@ fn test_lanczos_backend_equivalence() -> anyhow::Result<()> {
                     b_vec.as_ptr(),
                     krylov_dim as i32,
                 );
-                if ctx.is_null() {
-                    eprintln!("  eigen/one_pass:    skipped (stub returned null)");
-                } else {
-                    libeigen_lanczos_execute(ctx);
-                    libeigen_lanczos_get_y(ctx, y_buf.as_mut_ptr(), raw.nrows as i32);
-                    libeigen_lanczos_teardown(ctx);
+                anyhow::ensure!(!ctx.is_null(), "{name}: eigen/one_pass setup returned null");
+                libeigen_lanczos_execute(ctx);
+                libeigen_lanczos_get_y(ctx, y_buf.as_mut_ptr(), raw.nrows as i32);
+                libeigen_lanczos_teardown(ctx);
 
-                    let err = relative_l2_error(&y_buf, &faer_ref);
-                    eprintln!("  eigen/one_pass:    rel L2 = {err:.2e}");
-                    assert!(
-                        err < tol,
-                        "{name}: eigen/one_pass diverged: rel L2 = {err:.2e}"
-                    );
-                }
+                let err = relative_l2_error(&y_buf, &faer_ref);
+                eprintln!("  eigen/one_pass:    rel L2 = {err:.2e}");
+                assert!(
+                    err < tol,
+                    "{name}: eigen/one_pass diverged: rel L2 = {err:.2e}"
+                );
             }
         }
 
@@ -665,20 +657,20 @@ fn test_lanczos_backend_equivalence() -> anyhow::Result<()> {
                     b_vec.as_ptr(),
                     krylov_dim as i32,
                 );
-                if ctx.is_null() {
-                    eprintln!("  eigen_csc/one_pass: skipped (stub returned null)");
-                } else {
-                    libeigen_csc_lanczos_execute(ctx);
-                    libeigen_csc_lanczos_get_y(ctx, y_buf.as_mut_ptr(), raw.nrows as i32);
-                    libeigen_csc_lanczos_teardown(ctx);
+                anyhow::ensure!(
+                    !ctx.is_null(),
+                    "{name}: eigen_csc/one_pass setup returned null"
+                );
+                libeigen_csc_lanczos_execute(ctx);
+                libeigen_csc_lanczos_get_y(ctx, y_buf.as_mut_ptr(), raw.nrows as i32);
+                libeigen_csc_lanczos_teardown(ctx);
 
-                    let err = relative_l2_error(&y_buf, &faer_ref);
-                    eprintln!("  eigen_csc/one_pass: rel L2 = {err:.2e}");
-                    assert!(
-                        err < tol,
-                        "{name}: eigen_csc/one_pass diverged: rel L2 = {err:.2e}"
-                    );
-                }
+                let err = relative_l2_error(&y_buf, &faer_ref);
+                eprintln!("  eigen_csc/one_pass: rel L2 = {err:.2e}");
+                assert!(
+                    err < tol,
+                    "{name}: eigen_csc/one_pass diverged: rel L2 = {err:.2e}"
+                );
             }
         }
 
@@ -696,20 +688,20 @@ fn test_lanczos_backend_equivalence() -> anyhow::Result<()> {
                     b_vec.as_ptr(),
                     krylov_dim as i32,
                 );
-                if ctx.is_null() {
-                    eprintln!("  psblas_csr/one_pass:  skipped (stub returned null)");
-                } else {
-                    libpsblas_csr_lanczos_execute(ctx);
-                    libpsblas_csr_lanczos_get_y(ctx, y_buf.as_mut_ptr(), raw.nrows as i32);
-                    libpsblas_csr_lanczos_teardown(ctx);
+                anyhow::ensure!(
+                    !ctx.is_null(),
+                    "{name}: psblas_csr/one_pass setup returned null"
+                );
+                libpsblas_csr_lanczos_execute(ctx);
+                libpsblas_csr_lanczos_get_y(ctx, y_buf.as_mut_ptr(), raw.nrows as i32);
+                libpsblas_csr_lanczos_teardown(ctx);
 
-                    let err = relative_l2_error(&y_buf, &faer_ref);
-                    eprintln!("  psblas_csr/one_pass:  rel L2 = {err:.2e}");
-                    assert!(
-                        err < tol,
-                        "{name}: psblas_csr/one_pass diverged: rel L2 = {err:.2e}"
-                    );
-                }
+                let err = relative_l2_error(&y_buf, &faer_ref);
+                eprintln!("  psblas_csr/one_pass:  rel L2 = {err:.2e}");
+                assert!(
+                    err < tol,
+                    "{name}: psblas_csr/one_pass diverged: rel L2 = {err:.2e}"
+                );
             }
         }
 
@@ -727,20 +719,20 @@ fn test_lanczos_backend_equivalence() -> anyhow::Result<()> {
                     b_vec.as_ptr(),
                     krylov_dim as i32,
                 );
-                if ctx.is_null() {
-                    eprintln!("  psblas_csc/one_pass:  skipped (stub returned null)");
-                } else {
-                    libpsblas_csc_lanczos_execute(ctx);
-                    libpsblas_csc_lanczos_get_y(ctx, y_buf.as_mut_ptr(), raw.nrows as i32);
-                    libpsblas_csc_lanczos_teardown(ctx);
+                anyhow::ensure!(
+                    !ctx.is_null(),
+                    "{name}: psblas_csc/one_pass setup returned null"
+                );
+                libpsblas_csc_lanczos_execute(ctx);
+                libpsblas_csc_lanczos_get_y(ctx, y_buf.as_mut_ptr(), raw.nrows as i32);
+                libpsblas_csc_lanczos_teardown(ctx);
 
-                    let err = relative_l2_error(&y_buf, &faer_ref);
-                    eprintln!("  psblas_csc/one_pass:  rel L2 = {err:.2e}");
-                    assert!(
-                        err < tol,
-                        "{name}: psblas_csc/one_pass diverged: rel L2 = {err:.2e}"
-                    );
-                }
+                let err = relative_l2_error(&y_buf, &faer_ref);
+                eprintln!("  psblas_csc/one_pass:  rel L2 = {err:.2e}");
+                assert!(
+                    err < tol,
+                    "{name}: psblas_csc/one_pass diverged: rel L2 = {err:.2e}"
+                );
             }
         }
     }

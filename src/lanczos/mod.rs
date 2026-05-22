@@ -113,6 +113,24 @@ pub fn adaptive_krylov_dim(
     par: Par,
     stack: &mut MemStack,
 ) -> Result<(usize, LanczosDecomposition), LanczosError> {
+    let (m, decomposition, _) =
+        adaptive_krylov_dim_with_estimate(operator, b, max_k, tol, par, stack)?;
+    Ok((m, decomposition))
+}
+
+/// Same as [`adaptive_krylov_dim`], also returning the final a posteriori
+/// estimate used at the selected Krylov dimension.
+///
+/// # Errors
+/// Returns [`LanczosError`] if the underlying iteration fails.
+pub fn adaptive_krylov_dim_with_estimate(
+    operator: &impl LinOp<f64>,
+    b: MatRef<'_, f64>,
+    max_k: usize,
+    tol: f64,
+    par: Par,
+    stack: &mut MemStack,
+) -> Result<(usize, LanczosDecomposition, f64), LanczosError> {
     // Setup-phase helper: builds its own workspace. Not on the bench hot path.
     let probe_k = max_k + 1;
     let mut probe_ws = TwoPassWorkspace::new(b.nrows(), probe_k);
@@ -133,12 +151,15 @@ pub fn adaptive_krylov_dim(
                 steps_taken: 0,
                 b_norm,
             },
+            0.0,
         ));
     }
 
     let mut projected = ProjectedTridiagonalWorkspace::new(steps, par);
+    let mut last_estimate = f64::INFINITY;
     for m in 1..=steps {
         if m > probe_betas.len() {
+            last_estimate = 0.0;
             break;
         }
         let beta_next = probe_betas[m - 1];
@@ -149,6 +170,7 @@ pub fn adaptive_krylov_dim(
             beta_next,
             b_norm,
         );
+        last_estimate = err;
         if err < tol {
             let truncated = LanczosDecomposition {
                 alphas: probe_alphas[..m].to_vec(),
@@ -156,7 +178,7 @@ pub fn adaptive_krylov_dim(
                 steps_taken: m,
                 b_norm,
             };
-            return Ok((m, truncated));
+            return Ok((m, truncated, err));
         }
     }
 
@@ -166,7 +188,7 @@ pub fn adaptive_krylov_dim(
         steps_taken: steps,
         b_norm,
     };
-    Ok((steps, truncated))
+    Ok((steps, truncated, last_estimate))
 }
 
 /// Estimates `rho(A)` as the largest absolute Ritz value from a short

@@ -32,6 +32,7 @@ use hpla_rs::psblas::{
     libpsblas_csr_lanczos_two_pass_setup, libpsblas_csr_lanczos_two_pass_teardown,
 };
 use hpla_rs::{load_mtx_raw, scale_values};
+use std::hint::black_box;
 
 use common::{lanczos_matrices, probe_krylov_dim};
 use hpla_rs::lanczos::deterministic_rhs;
@@ -139,7 +140,7 @@ fn bench_lanczos_two_pass(c: &mut Criterion) {
                     stack,
                     |alphas, betas, out| projected.exp_neg_tk(alphas, betas, out),
                 );
-                let _ = criterion::black_box(result);
+                let _ = black_box(result);
             });
         });
 
@@ -164,7 +165,7 @@ fn bench_lanczos_two_pass(c: &mut Criterion) {
                     stack,
                     |alphas, betas, out| projected_csr.exp_neg_tk(alphas, betas, out),
                 );
-                let _ = criterion::black_box(result);
+                let _ = black_box(result);
             });
         });
 
@@ -183,20 +184,19 @@ fn bench_lanczos_two_pass(c: &mut Criterion) {
                 krylov_dim as i32,
             );
 
-            if !ctx.is_null() {
-                group.bench_with_input(
-                    BenchmarkId::new("eigen_csr", "two_pass"),
-                    &(),
-                    |bench, _| {
-                        bench.iter(|| {
-                            libeigen_lanczos_two_pass_execute(ctx);
-                            criterion::black_box(ctx);
-                        });
-                    },
-                );
+            assert!(!ctx.is_null(), "eigen_csr two-pass setup returned null");
+            group.bench_with_input(
+                BenchmarkId::new("eigen_csr", "two_pass"),
+                &(),
+                |bench, _| {
+                    bench.iter(|| {
+                        libeigen_lanczos_two_pass_execute(ctx);
+                        black_box(ctx);
+                    });
+                },
+            );
 
-                libeigen_lanczos_two_pass_teardown(ctx);
-            }
+            libeigen_lanczos_two_pass_teardown(ctx);
         }
 
         // --------------------------------------------------------
@@ -214,20 +214,19 @@ fn bench_lanczos_two_pass(c: &mut Criterion) {
                 krylov_dim as i32,
             );
 
-            if !ctx.is_null() {
-                group.bench_with_input(
-                    BenchmarkId::new("eigen_csc", "two_pass"),
-                    &(),
-                    |bench, _| {
-                        bench.iter(|| {
-                            libeigen_csc_lanczos_two_pass_execute(ctx);
-                            criterion::black_box(ctx);
-                        });
-                    },
-                );
+            assert!(!ctx.is_null(), "eigen_csc two-pass setup returned null");
+            group.bench_with_input(
+                BenchmarkId::new("eigen_csc", "two_pass"),
+                &(),
+                |bench, _| {
+                    bench.iter(|| {
+                        libeigen_csc_lanczos_two_pass_execute(ctx);
+                        black_box(ctx);
+                    });
+                },
+            );
 
-                libeigen_csc_lanczos_two_pass_teardown(ctx);
-            }
+            libeigen_csc_lanczos_two_pass_teardown(ctx);
         }
 
         // --------------------------------------------------------
@@ -245,20 +244,19 @@ fn bench_lanczos_two_pass(c: &mut Criterion) {
                 krylov_dim as i32,
             );
 
-            if !ctx.is_null() {
-                group.bench_with_input(
-                    BenchmarkId::new("petsc_csr", "two_pass"),
-                    &(),
-                    |bench, _| {
-                        bench.iter(|| {
-                            libpetsc_lanczos_two_pass_execute(ctx);
-                            criterion::black_box(ctx);
-                        });
-                    },
-                );
+            assert!(!ctx.is_null(), "petsc_csr two-pass setup returned null");
+            group.bench_with_input(
+                BenchmarkId::new("petsc_csr", "two_pass"),
+                &(),
+                |bench, _| {
+                    bench.iter(|| {
+                        libpetsc_lanczos_two_pass_execute(ctx);
+                        black_box(ctx);
+                    });
+                },
+            );
 
-                libpetsc_lanczos_two_pass_teardown(ctx);
-            }
+            libpetsc_lanczos_two_pass_teardown(ctx);
         }
 
         // --------------------------------------------------------
@@ -276,20 +274,19 @@ fn bench_lanczos_two_pass(c: &mut Criterion) {
                 krylov_dim as i32,
             );
 
-            if !ctx.is_null() {
-                group.bench_with_input(
-                    BenchmarkId::new("psblas_csr", "two_pass"),
-                    &(),
-                    |bench, _| {
-                        bench.iter(|| {
-                            libpsblas_csr_lanczos_two_pass_execute(ctx);
-                            criterion::black_box(ctx);
-                        });
-                    },
-                );
+            assert!(!ctx.is_null(), "psblas_csr two-pass setup returned null");
+            group.bench_with_input(
+                BenchmarkId::new("psblas_csr", "two_pass"),
+                &(),
+                |bench, _| {
+                    bench.iter(|| {
+                        libpsblas_csr_lanczos_two_pass_execute(ctx);
+                        black_box(ctx);
+                    });
+                },
+            );
 
-                libpsblas_csr_lanczos_two_pass_teardown(ctx);
-            }
+            libpsblas_csr_lanczos_two_pass_teardown(ctx);
         }
 
         // --------------------------------------------------------
@@ -307,20 +304,19 @@ fn bench_lanczos_two_pass(c: &mut Criterion) {
                 krylov_dim as i32,
             );
 
-            if !ctx.is_null() {
-                group.bench_with_input(
-                    BenchmarkId::new("psblas_csc", "two_pass"),
-                    &(),
-                    |bench, _| {
-                        bench.iter(|| {
-                            libpsblas_csc_lanczos_two_pass_execute(ctx);
-                            criterion::black_box(ctx);
-                        });
-                    },
-                );
+            assert!(!ctx.is_null(), "psblas_csc two-pass setup returned null");
+            group.bench_with_input(
+                BenchmarkId::new("psblas_csc", "two_pass"),
+                &(),
+                |bench, _| {
+                    bench.iter(|| {
+                        libpsblas_csc_lanczos_two_pass_execute(ctx);
+                        black_box(ctx);
+                    });
+                },
+            );
 
-                libpsblas_csc_lanczos_two_pass_teardown(ctx);
-            }
+            libpsblas_csc_lanczos_two_pass_teardown(ctx);
         }
 
         group.finish();

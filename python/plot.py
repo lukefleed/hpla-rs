@@ -1,42 +1,71 @@
 #!/usr/bin/env python3
 
 import sys
-import warnings
 import argparse
 import json
 from pathlib import Path
 
-warnings.filterwarnings("ignore")
+SCRIPT_DIR = Path(__file__).resolve().parent
+DEFAULT_DATA_DIR = SCRIPT_DIR / "data"
+RAW_SAMPLES_CSV = "raw_samples.csv"
+SUMMARY_CSV = "summary.csv"
+ACCURACY_CSV = "lanczos_accuracy.csv"
+np = None
+pd = None
+plt = None
 
-try:
-    import numpy as np
-    import pandas as pd
-    import matplotlib.pyplot as plt
-except ModuleNotFoundError as exc:
-    sys.stderr.write(
-        "error: missing Python dependency for plotting: "
-        f"{exc.name}\n"
-        "       install requirements with: pip3 install -r python/requirements.txt\n"
-    )
-    sys.exit(1)
 
-plt.style.use('seaborn-v0_8-whitegrid')
-plt.rcParams.update({
-    'font.size': 12,
-    'font.family': 'serif',
-    'font.serif': ['Computer Modern Roman', 'Times New Roman', 'DejaVu Serif', 'serif'],
-})
+def _script_command():
+    return f"python3 {Path(sys.argv[0]).as_posix()}"
 
-# ---------------------------------------------------------------------------
-# Library palette (Wong colorblind-safe)
-# ---------------------------------------------------------------------------
 
+def _load_data_deps():
+    global np, pd
+    if np is not None:
+        return
+    try:
+        import numpy as _np
+        import pandas as _pd
+    except ModuleNotFoundError as exc:
+        sys.stderr.write(
+            "error: missing Python dependency: "
+            f"{exc.name}\n"
+            "       install requirements with: python3 -m pip install -r python/requirements.txt\n"
+        )
+        sys.exit(1)
+
+    np = _np
+    pd = _pd
+
+
+def _load_plot_deps():
+    global plt
+    _load_data_deps()
+    if plt is not None:
+        return
+    try:
+        import matplotlib.pyplot as _plt
+    except ModuleNotFoundError as exc:
+        sys.stderr.write(
+            "error: missing Python dependency for plotting: "
+            f"{exc.name}\n"
+            "       install requirements with: python3 -m pip install -r python/requirements.txt\n"
+        )
+        sys.exit(1)
+
+    plt = _plt
+    plt.style.use('seaborn-v0_8-whitegrid')
+    plt.rcParams.update({
+        'font.size': 12,
+        'font.family': 'serif',
+        'font.serif': ['Computer Modern Roman', 'Times New Roman', 'DejaVu Serif', 'serif'],
+    })
 LIBRARY_COLORS = {
-    'faer':   '#0072B2',  # blue
-    'eigen':  '#E69F00',  # orange
-    'petsc':  '#009E73',  # green
-    'psblas': '#D55E00',  # vermilion
-    'mkl':    '#CC79A7',  # reddish purple
+    'faer': '#0072B2',
+    'eigen': '#E69F00',
+    'petsc': '#009E73',
+    'psblas': '#D55E00',
+    'mkl': '#CC79A7',
 }
 
 
@@ -54,12 +83,6 @@ def _bar_label(config):
         return config.rsplit('/', 1)[0]
     return config.replace('/', '\n')
 
-
-# ---------------------------------------------------------------------------
-# SpMV configuration
-# ---------------------------------------------------------------------------
-
-# Backends whose storage format is CSC (plotted with hollow markers on roofline)
 SPMV_CSC_BACKENDS = {'faer/csc', 'eigen/csc_map', 'mkl/csc_ie', 'psblas/csc'}
 
 SPMV_CONFIG_ORDER = [
@@ -72,16 +95,9 @@ SPMV_CONFIG_ORDER = [
 
 SPMV_BACKEND_COLORS = {b: LIBRARY_COLORS[_library_of_spmv(b)]
                        for b in SPMV_CONFIG_ORDER}
-
-# ---------------------------------------------------------------------------
-# Lanczos two-pass configuration
-# ---------------------------------------------------------------------------
-
 LANCZOS_TWO_PASS_CONFIG_ORDER = [
     'faer_csc/two_pass', 'faer_csr/two_pass',
-    'faer/two_pass',
     'eigen_csr/two_pass', 'eigen_csc/two_pass',
-    'eigen/two_pass',
     'petsc_csr/two_pass',
     'psblas_csr/two_pass', 'psblas_csc/two_pass',
 ]
@@ -90,16 +106,9 @@ LANCZOS_TWO_PASS_BACKEND_COLORS = {
     b: LIBRARY_COLORS[_library_of_lanczos(b)]
     for b in LANCZOS_TWO_PASS_CONFIG_ORDER
 }
-
-# ---------------------------------------------------------------------------
-# Lanczos one-pass configuration
-# ---------------------------------------------------------------------------
-
 LANCZOS_ONE_PASS_CONFIG_ORDER = [
     'faer_csc/one_pass', 'faer_csr/one_pass',
-    'faer/one_pass',
     'eigen_csr/one_pass', 'eigen_csc/one_pass',
-    'eigen/one_pass',
     'petsc_csr/one_pass',
     'psblas_csr/one_pass', 'psblas_csc/one_pass',
 ]
@@ -109,104 +118,226 @@ LANCZOS_ONE_PASS_BACKEND_COLORS = {
     for b in LANCZOS_ONE_PASS_CONFIG_ORDER
 }
 
+LANCZOS_MATRICES = {
+    "kron_g500-logn18",
+    "coPapersDBLP",
+    "thermal2",
+    "as-Skitter",
+    "roadNet-CA",
+    "delaunay_n22",
+    "caidaRouterLevel",
+    "citationCiteseer",
+    "coAuthorsCiteseer",
+    "coPapersCiteseer",
+    "preferentialAttachment",
+    "smallworld",
+    "rgg_n_2_20_s0",
+    "belgium_osm",
+    "auto",
+}
 
-def load_data(criterion_path, group_prefix, derive_nnz, exclude_prefix=None):
-    """Load Criterion benchmark results into a DataFrame.
 
-    Scans every group directory matching `{group_prefix}*` under
-    *criterion_path* and extracts throughput data.
+def _benchmark_from_group(group):
+    if group.startswith("lanczos_two_pass_"):
+        return "lanczos_two_pass", group[len("lanczos_two_pass_"):]
+    if group.startswith("lanczos_"):
+        return "lanczos", group[len("lanczos_"):]
+    if group.startswith("spmv_"):
+        return "spmv", group[len("spmv_"):]
+    return None, None
 
-    Parameters
-    ----------
-    criterion_path : str or Path
-        Root Criterion output directory (`target/criterion`).
-    group_prefix : str
-        Directory prefix to match, e.g. `"spmv_"` or
-        `"lanczos_two_pass_"`.
-    derive_nnz : callable or None
-        Function `(elements_processed) -> nnz`.  For SpMV this is
-        `lambda e: e // 2` (element count = 2*nnz).  For Lanczos the
-        bench already encoded the full FLOP count, so `nnz` is not
-        meaningful and should be set to the raw element count.
 
-    Returns
-    -------
-    pd.DataFrame
-        Columns: Matrix, Configuration, Throughput (GFLOP/s),
-        GFLOP/s lower, GFLOP/s upper, nnz.
-    """
-    data = []
-    base_dir = Path(criterion_path)
-    if not base_dir.exists():
-        print(f"Error: {base_dir} does not exist.")
-        return pd.DataFrame(data)
+def _time_unit_to_ns_factor(unit):
+    if unit != "ns":
+        raise ValueError(f"unsupported Criterion time unit: {unit}")
+    return 1.0
 
-    for group_dir in base_dir.glob(f"{group_prefix}*"):
-        if exclude_prefix and group_dir.name.startswith(exclude_prefix):
+
+def _throughput_to_gflops(elements, time_ns):
+    return elements / (time_ns * 1e-9) / 1e9
+
+
+def _slope_through_origin(xs, ys):
+    xs = np.asarray(xs, dtype=float)
+    ys = np.asarray(ys, dtype=float)
+    denom = np.dot(xs, xs)
+    if denom <= 0.0:
+        return np.nan
+    return float(np.dot(xs, ys) / denom)
+
+
+def _matrix_stems(matrices_dir):
+    path = Path(matrices_dir)
+    if not path.exists():
+        return None
+    return {p.stem for p in path.glob("*.mtx")}
+
+
+def _current_samples(samples, matrices_dir):
+    if samples.empty:
+        return samples
+
+    spmv_matrices = _matrix_stems(matrices_dir)
+    config_sets = {
+        "spmv": set(SPMV_CONFIG_ORDER),
+        "lanczos": set(LANCZOS_ONE_PASS_CONFIG_ORDER),
+        "lanczos_two_pass": set(LANCZOS_TWO_PASS_CONFIG_ORDER),
+    }
+
+    keep = []
+    for _, row in samples.iterrows():
+        benchmark = row["Benchmark"]
+        matrix = row["Matrix"]
+        config = row["Configuration"]
+
+        if config not in config_sets.get(benchmark, set()):
+            keep.append(False)
             continue
-        matrix_name = group_dir.name[len(group_prefix):]
+        if benchmark == "spmv" and spmv_matrices is not None:
+            keep.append(matrix in spmv_matrices)
+            continue
+        if benchmark in ("lanczos", "lanczos_two_pass"):
+            keep.append(matrix in LANCZOS_MATRICES)
+            continue
+        keep.append(True)
 
-        for backend_dir in group_dir.iterdir():
-            if not backend_dir.is_dir() or backend_dir.name == "report":
+    return samples.loc[keep].reset_index(drop=True)
+
+
+def collect_raw_samples(criterion_dir):
+    rows = []
+    criterion_path = Path(criterion_dir)
+    for raw_file in criterion_path.glob("*/*/*/new/raw.csv"):
+        frame = pd.read_csv(raw_file)
+        for _, row in frame.iterrows():
+            benchmark, matrix = _benchmark_from_group(row["group"])
+            if benchmark is None:
                 continue
-            backend = backend_dir.name
+            function = str(row["function"])
+            value = str(row["value"])
+            configuration = f"{function}/{value}"
+            elements = int(row["throughput_num"])
+            sample_value = float(row["sample_measured_value"])
+            unit = str(row["unit"])
+            iteration_count = int(row["iteration_count"])
+            sample_time_ns = sample_value * _time_unit_to_ns_factor(unit)
+            time_per_iter_ns = sample_time_ns / iteration_count
+            rows.append({
+                "Criterion group": row["group"],
+                "Criterion function": function,
+                "Criterion value": value,
+                "Benchmark": benchmark,
+                "Matrix": matrix,
+                "Configuration": configuration,
+                "Elements": elements,
+                "Throughput type": row["throughput_type"],
+                "Sample measured value": sample_value,
+                "Unit": unit,
+                "Iteration count": iteration_count,
+                "Sample time (ns)": sample_time_ns,
+                "Time per iter (ns)": time_per_iter_ns,
+                "Throughput (GFLOP/s)": _throughput_to_gflops(
+                    elements, time_per_iter_ns,
+                ),
+                "Criterion path": str(raw_file.relative_to(criterion_path)),
+            })
+    columns = [
+        "Criterion group", "Criterion function", "Criterion value",
+        "Benchmark", "Matrix", "Configuration", "Elements",
+        "Throughput type", "Sample measured value", "Unit",
+        "Iteration count", "Sample time (ns)", "Time per iter (ns)",
+        "Throughput (GFLOP/s)", "Criterion path",
+    ]
+    return pd.DataFrame(rows, columns=columns)
 
-            for config_dir in backend_dir.iterdir():
-                if not config_dir.is_dir():
-                    continue
-                config = config_dir.name
-                full_config = f"{backend}/{config}"
 
-                bench_file = config_dir / "new" / "benchmark.json"
-                est_file = config_dir / "new" / "estimates.json"
+def summarize_samples(samples):
+    if samples.empty:
+        return pd.DataFrame()
 
-                if bench_file.exists() and est_file.exists():
-                    with open(bench_file, 'r') as f:
-                        bench_data = json.load(f)
-                    with open(est_file, 'r') as f:
-                        est_data = json.load(f)
+    data = []
+    grouped = samples.groupby(
+        ["Benchmark", "Matrix", "Configuration"],
+        sort=True,
+        as_index=False,
+    )
+    for (benchmark, matrix, config), group in grouped:
+        elements_values = group["Elements"].unique()
+        if len(elements_values) != 1:
+            raise ValueError(
+                f"inconsistent throughput elements for {benchmark}/{matrix}/{config}"
+            )
+        elements = int(elements_values[0])
+        iters = group["Iteration count"].to_numpy(dtype=float)
+        times = group["Sample time (ns)"].to_numpy(dtype=float)
 
-                    elements_processed = bench_data.get('throughput', {}).get('Elements', 0)
-                    time_ns = est_data.get('mean', {}).get('point_estimate', 0)
-                    ci_lower = est_data.get('mean', {}).get('confidence_interval', {}).get('lower_bound', 0)
-                    ci_upper = est_data.get('mean', {}).get('confidence_interval', {}).get('upper_bound', 0)
+        slope = _slope_through_origin(iters, times)
+        throughput = _throughput_to_gflops(elements, slope)
 
-                    if elements_processed > 0 and time_ns > 0:
-                        time_s = time_ns * 1e-9
-                        elements_per_sec = elements_processed / time_s
-                        gflops_per_sec = elements_per_sec / 1e9
-
-                        if ci_lower > 0 and ci_upper > 0:
-                            gflops_upper = elements_processed / (ci_lower * 1e-9) / 1e9
-                            gflops_lower = elements_processed / (ci_upper * 1e-9) / 1e9
-                        else:
-                            gflops_upper = gflops_per_sec
-                            gflops_lower = gflops_per_sec
-
-                        nnz = derive_nnz(elements_processed) if derive_nnz else elements_processed
-
-                        data.append({
-                            'Matrix': matrix_name,
-                            'Configuration': full_config,
-                            'Throughput (GFLOP/s)': gflops_per_sec,
-                            'GFLOP/s lower': gflops_lower,
-                            'GFLOP/s upper': gflops_upper,
-                            'nnz': int(nnz),
-                        })
+        nnz = elements // 2 if benchmark == "spmv" else elements
+        data.append({
+            "Benchmark": benchmark,
+            "Matrix": matrix,
+            "Configuration": config,
+            "Elements": elements,
+            "Time estimate (ns)": slope,
+            "Throughput (GFLOP/s)": throughput,
+            "nnz": int(nnz),
+            "Samples": int(len(group)),
+        })
     return pd.DataFrame(data)
 
 
+def relative_score_table(summary, config_order):
+    if summary.empty:
+        return pd.DataFrame()
+    active = summary[summary["Configuration"].isin(config_order)].copy()
+    if active.empty:
+        return pd.DataFrame()
+    active["Configuration"] = pd.Categorical(
+        active["Configuration"], categories=config_order, ordered=True,
+    )
+    best = active.groupby("Matrix", observed=False)["Throughput (GFLOP/s)"].transform("max")
+    active["Relative score"] = active["Throughput (GFLOP/s)"] / best
+    return active.sort_values(["Matrix", "Configuration"]).reset_index(drop=True)
+
+
+def export_csv_data(criterion_dir, data_dir, matrices_dir):
+    _load_data_deps()
+    out_dir = Path(data_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    samples = _current_samples(collect_raw_samples(criterion_dir), matrices_dir)
+    if samples.empty:
+        sys.stderr.write(
+            f"error: no Criterion raw.csv files found under {criterion_dir}.\n"
+            "       Re-run the current benchmarks with Criterion's csv_output feature enabled.\n"
+        )
+        sys.exit(1)
+
+    summary = summarize_samples(samples)
+    samples.to_csv(out_dir / RAW_SAMPLES_CSV, index=False)
+    summary.to_csv(out_dir / SUMMARY_CSV, index=False)
+
+    print(f"[data] wrote {out_dir / RAW_SAMPLES_CSV}")
+    print(f"[data] wrote {out_dir / SUMMARY_CSV}")
+
+
+def load_summary_data(data_dir):
+    _load_data_deps()
+    path = Path(data_dir) / SUMMARY_CSV
+    if not path.exists():
+        sys.stdout.flush()
+        sys.stderr.write(
+            f"error: {path} not found.\n"
+            f"       Use `{_script_command()} export-csv`\n"
+            "       after running the Criterion benchmarks, or commit the generated CSVs.\n"
+        )
+        sys.exit(1)
+    return pd.read_csv(path)
+
+
 def read_mtx_dimensions(matrices_dir):
-    """Read nrows and ncols from every `.mtx` file in *matrices_dir*.
-
-    Skips comment lines (starting with `%`) and parses the first
-    non-comment line which contains `nrows ncols nnz_stored`.
-
-    Returns
-    -------
-    dict[str, tuple[int, int]]
-        Mapping from matrix stem name to `(nrows, ncols)`.
-    """
     dims = {}
     mat_path = Path(matrices_dir)
     if not mat_path.exists():
@@ -228,40 +359,12 @@ def read_mtx_dimensions(matrices_dir):
 
 
 def compute_arithmetic_intensity(nrows, ncols, nnz):
-    """Cold-cache compulsory-traffic AI for CSR SpMV (FLOP/byte).
-
-    bytes = (nrows+1)*4 + nnz*4 + nnz*8 + ncols*8 + nrows*16
-    FLOP = 2 * nnz
-
-    For square matrices, CSR and CSC give the same result.
-    After warmup, y may be cached; effective AI is higher than plotted.
-    """
     bytes_moved = (nrows + 1) * 4 + nnz * 4 + nnz * 8 + ncols * 8 + nrows * 16
     return (2 * nnz) / bytes_moved
 
 
 def plot_roofline(df, matrix_dims, hw_config, output_dir, config_order,
                   backend_colors, csc_backends):
-    """Generate a roofline model plot (log-log) for all backends and matrices.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Must contain columns `Matrix`, `Configuration`,
-        `Throughput (GFLOP/s)` and `nnz`.
-    matrix_dims : dict[str, tuple[int, int]]
-        Mapping matrix name -> `(nrows, ncols)`.
-    hw_config : dict
-        Must contain key `stream_triad_GBs` (bandwidth in GB/s).
-    output_dir : str | Path
-        Directory where `roofline.png` will be saved.
-    config_order : list[str]
-        Backend ordering for the legend.
-    backend_colors : dict[str, str]
-        Backend -> hex color.
-    csc_backends : set[str]
-        Backends plotted with hollow markers.
-    """
     out_path = Path(output_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 
@@ -371,27 +474,6 @@ def plot_roofline(df, matrix_dims, hw_config, output_dir, config_order,
 
 def generate_plots(df, output_dir, config_order, backend_colors,
                    title_prefix, matrix_dims=None, hw_config=None):
-    """Generate per-matrix bar charts of throughput.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Must contain `Matrix`, `Configuration`,
-        `Throughput (GFLOP/s)` and `nnz`.
-    output_dir : str | Path
-        Directory for per-matrix PNG files.
-    config_order : list[str]
-        Backend ordering.
-    backend_colors : dict[str, str]
-        Backend -> hex color.
-    title_prefix : str
-        Plot title prefix, e.g. `"SpMV Performance on"` or
-        `"Two-Pass Lanczos Performance on"`.
-    matrix_dims : dict[str, tuple[int, int]] or None
-        Mapping matrix name -> `(nrows, ncols)`.
-    hw_config : dict or None
-        Must contain `stream_triad_GBs` if supplied.
-    """
     out_path = Path(output_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 
@@ -413,7 +495,6 @@ def generate_plots(df, output_dir, config_order, backend_colors,
         )
         matrix_df = matrix_df.sort_values('Config_Cat')
 
-        # Compute per-matrix bandwidth ceiling (SpMV only)
         ceiling = None
         if matrix_dims is not None and hw_config is not None and matrix in matrix_dims:
             nrows, ncols = matrix_dims[matrix]
@@ -429,16 +510,9 @@ def generate_plots(df, output_dir, config_order, backend_colors,
 
         bar_colors = [backend_colors.get(cfg, '#999999') for cfg in matrix_df['Configuration']]
 
-        yerr_lower = matrix_df['Throughput (GFLOP/s)'] - matrix_df['GFLOP/s lower']
-        yerr_upper = matrix_df['GFLOP/s upper'] - matrix_df['Throughput (GFLOP/s)']
-        yerr = [yerr_lower.values, yerr_upper.values]
-
         bars = plt.bar(
             x_pos,
             matrix_df['Throughput (GFLOP/s)'],
-            yerr=yerr,
-            capsize=3,
-            ecolor='gray',
             color=bar_colors,
             edgecolor='black',
             linewidth=1.2,
@@ -483,13 +557,16 @@ def generate_plots(df, output_dir, config_order, backend_colors,
         print(f"[{matrix}] Saved plot to -> {save_path}")
 
 
-def run_spmv(criterion_dir, matrices_dir, hw_config_path):
-    """SpMV plotting pipeline."""
-    print("Parsing Criterion JSON results (SpMV)...")
-    df = load_data(criterion_dir, "spmv_", derive_nnz=lambda e: e // 2)
+def benchmark_summary(df, benchmark):
+    return df[df["Benchmark"] == benchmark].copy()
+
+
+def run_spmv(data_dir, matrices_dir, hw_config_path):
+    print("Reading CSV benchmark summary (SpMV)...")
+    df = benchmark_summary(load_summary_data(data_dir), "spmv")
 
     if df.empty:
-        print("No SpMV data found. Run 'cargo bench --bench spmv' first.")
+        print(f"No SpMV data found in {Path(data_dir) / SUMMARY_CSV}.")
         sys.exit(1)
 
     print(f"Found {len(df)} configurations across {df['Matrix'].nunique()} matrices.")
@@ -497,7 +574,7 @@ def run_spmv(criterion_dir, matrices_dir, hw_config_path):
     hw_config = _load_hw_config(hw_config_path)
     matrix_dims = _load_matrix_dims(matrices_dir)
 
-    output_dir = Path(__file__).parent / "spmv"
+    output_dir = SCRIPT_DIR / "spmv"
     generate_plots(
         df, output_dir,
         config_order=SPMV_CONFIG_ORDER,
@@ -515,43 +592,25 @@ def run_spmv(criterion_dir, matrices_dir, hw_config_path):
         )
 
 
-def run_lanczos_two_pass(criterion_dir, matrices_dir, hw_config_path):
-    """Lanczos two-pass plotting pipeline."""
-    print("Parsing Criterion JSON results (lanczos_two_pass)...")
-    # The bench harness already encodes the full FLOP count in the
-    # throughput element count (4k*(nnz + 4n)), so no division needed.
-    df = load_data(criterion_dir, "lanczos_two_pass_", derive_nnz=lambda e: e)
+def run_lanczos_two_pass(data_dir):
+    print("Reading CSV benchmark summary (lanczos_two_pass)...")
+    df = benchmark_summary(load_summary_data(data_dir), "lanczos_two_pass")
 
     if df.empty:
-        print("No lanczos_two_pass data found. Run 'cargo bench --bench lanczos_two_pass' first.")
+        print(f"No lanczos_two_pass data found in {Path(data_dir) / SUMMARY_CSV}.")
         sys.exit(1)
 
     print(f"Found {len(df)} configurations across {df['Matrix'].nunique()} matrices.")
 
-    output_dir = Path(__file__).parent / "lanczos_two_pass"
+    output_dir = SCRIPT_DIR / "lanczos_two_pass"
     generate_plots(
         df, output_dir,
         config_order=LANCZOS_TWO_PASS_CONFIG_ORDER,
         backend_colors=LANCZOS_TWO_PASS_BACKEND_COLORS,
         title_prefix="Two-Pass Lanczos Performance on",
-        matrix_dims=None,
-        hw_config=None,
     )
 
-    # TODO: Roofline for Lanczos two-pass. The dominant cost is 2k SpMVs,
-    # but the vector-work overhead (9n + 7n per step) changes the
-    # effective arithmetic intensity compared to bare SpMV.  Deriving
-    # a proper compulsory-traffic model requires accounting for the
-    # rolling three-vector access pattern and the tridiagonal solve.
-    # Skipped until the traffic model is worked out.
-
-
 def parse_lanczos_config(config):
-    """Parse a Lanczos configuration string into (library, format, kernel).
-
-    Returns ``None`` for aliases that lack an explicit format
-    suffix (e.g. ``faer/two_pass``, ``eigen/one_pass``).
-    """
     if '/' not in config:
         return None
     backend, kernel = config.split('/', 1)
@@ -570,12 +629,6 @@ def parse_lanczos_config(config):
 
 
 def lanczos_slice(df, kernel, fmt):
-    """Pivot ``Matrix x Library`` for one ``(kernel, fmt)`` slice.
-
-    Returns ``(configs, libraries, matrices, throughput)``. Matrices
-    missing data for any library in the slice are dropped, so all four
-    return values are aligned and free of NaNs.
-    """
     active_order = (
         LANCZOS_ONE_PASS_CONFIG_ORDER
         if kernel == 'one_pass'
@@ -616,20 +669,6 @@ def lanczos_slice(df, kernel, fmt):
 
 def plot_perfprof(configs, libraries, throughput, backend_colors, title,
                   save_path, thmax=None):
-    """Render a Dolan-Moré performance-profile PNG.
-
-    For each library, the curve is the empirical CDF of the
-    performance ratio
-
-        r[i, lib] = best_i / throughput[i, lib],
-
-    where ``best_i = max_lib throughput[i, lib]`` is the fastest library
-    on matrix ``i``.  The curve is
-
-        rho_lib(theta) = #{i : r[i, lib] <= theta} / n_matrices,
-
-    drawn as a steps-post line.
-    """
     n_matrices, n_libraries = throughput.shape
     if n_matrices == 0 or n_libraries == 0:
         print(f"[perfprof] No data for {title}")
@@ -680,13 +719,6 @@ def plot_perfprof(configs, libraries, throughput, backend_colors, title,
 
 
 def parse_spmv_config(config):
-    """Parse a SpMV configuration string into (library, format, variant).
-
-    SpMV backend ids follow ``"<library>/<fmt>[_<variant>]"``, e.g.
-    ``"mkl/csr_ie"`` -> ``("mkl", "csr", "ie")`` and
-    ``"faer/csr"`` -> ``("faer", "csr", None)``.  Returns ``None`` for
-    strings that do not match.
-    """
     if '/' not in config:
         return None
     library, suffix = config.split('/', 1)
@@ -699,14 +731,6 @@ def parse_spmv_config(config):
 
 
 def spmv_slice(df, fmt):
-    """Pivot ``Matrix x Backend`` for one SpMV storage format.
-
-    Returns ``(configs, labels, matrices, throughput)`` aligned across
-    all backends in the slice; matrices missing data for any backend
-    are dropped.  Labels collapse to the library name when a single
-    variant exists, falling back to ``"<library> (<variant>)"`` when a
-    library exposes more than one configured variant.
-    """
     pairs = []
     present = set(df['Configuration'].unique())
     for cfg in SPMV_CONFIG_ORDER:
@@ -750,16 +774,284 @@ def spmv_slice(df, fmt):
     return configs, labels, matrices, pivot.values
 
 
-def run_perfprof(criterion_dir):
-    """Generate Lanczos and SpMV throughput-exceedance plots."""
-    output_dir = Path(__file__).parent / "perfprof"
+def plot_violin_scores(scores, configs, labels, backend_colors, title, save_path):
+    if scores.empty:
+        print(f"[violin] No data for {title}")
+        return
+
+    data = []
+    active_configs = []
+    active_labels = []
+    for cfg, label in zip(configs, labels):
+        values = scores.loc[
+            scores["Configuration"] == cfg, "Relative score"
+        ].to_numpy(dtype=float)
+        values = values[~np.isnan(values)]
+        if values.size == 0:
+            continue
+        data.append(values)
+        active_configs.append(cfg)
+        active_labels.append(label)
+
+    if not data:
+        print(f"[violin] No aligned data for {title}")
+        return
+
+    out_path = Path(save_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    positions = np.arange(1, len(data) + 1)
+    fig, ax = plt.subplots(figsize=(8.5, 5.2))
+    parts = ax.violinplot(
+        data,
+        positions=positions,
+        widths=0.78,
+        showmeans=False,
+        showmedians=True,
+        showextrema=False,
+    )
+
+    for body, cfg in zip(parts["bodies"], active_configs):
+        color = backend_colors.get(cfg, "#999999")
+        body.set_facecolor(color)
+        body.set_edgecolor("black")
+        body.set_alpha(0.28)
+        body.set_linewidth(1.0)
+    parts["cmedians"].set_color("black")
+    parts["cmedians"].set_linewidth(1.4)
+
+    rng = np.random.default_rng(42)
+    for pos, cfg, values in zip(positions, active_configs, data):
+        x = rng.normal(loc=pos, scale=0.045, size=len(values))
+        ax.scatter(
+            x,
+            values,
+            s=28,
+            color=backend_colors.get(cfg, "#999999"),
+            edgecolor="black",
+            linewidth=0.4,
+            alpha=0.85,
+            zorder=4,
+        )
+
+    ax.axhline(1.0, color="black", linestyle="--", linewidth=1.0, alpha=0.55)
+    ax.set_ylim(0.0, 1.05)
+    ax.set_xticks(positions)
+    ax.set_xticklabels(active_labels, rotation=0, ha="center", fontsize=11)
+    ax.set_ylabel("Relative throughput (best backend per matrix = 1)", fontsize=12)
+    ax.set_title(title, fontsize=14, pad=12)
+    ax.grid(axis="y", linestyle="--", alpha=0.45)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=300, bbox_inches="tight", transparent=False)
+    plt.close()
+    print(f"[violin] Saved -> {out_path}")
+
+
+def run_violin(data_dir):
+    summary = load_summary_data(data_dir)
+    output_dir = SCRIPT_DIR / "violin"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    print("Parsing Criterion JSON results (perfprof)...")
-    df_one = load_data(criterion_dir, "lanczos_", derive_nnz=lambda e: e,
-                       exclude_prefix="lanczos_two_pass_")
-    df_two = load_data(criterion_dir, "lanczos_two_pass_", derive_nnz=lambda e: e)
-    df_spmv = load_data(criterion_dir, "spmv_", derive_nnz=lambda e: e // 2)
+    df_one = benchmark_summary(summary, "lanczos")
+    df_two = benchmark_summary(summary, "lanczos_two_pass")
+    df_spmv = benchmark_summary(summary, "spmv")
+
+    lanczos_plots = [
+        (df_one, "one_pass", "csr", LANCZOS_ONE_PASS_BACKEND_COLORS,
+         "One-Pass Lanczos, CSR", "violin_one_pass_csr.png"),
+        (df_one, "one_pass", "csc", LANCZOS_ONE_PASS_BACKEND_COLORS,
+         "One-Pass Lanczos, CSC", "violin_one_pass_csc.png"),
+        (df_two, "two_pass", "csr", LANCZOS_TWO_PASS_BACKEND_COLORS,
+         "Two-Pass Lanczos, CSR", "violin_two_pass_csr.png"),
+        (df_two, "two_pass", "csc", LANCZOS_TWO_PASS_BACKEND_COLORS,
+         "Two-Pass Lanczos, CSC", "violin_two_pass_csc.png"),
+    ]
+
+    for df, kernel, fmt, colors, label, filename in lanczos_plots:
+        if df.empty:
+            print(f"[skip] violin {kernel}/{fmt}: no benchmark data")
+            continue
+        configs, libraries, matrices, _ = lanczos_slice(df, kernel, fmt)
+        if not matrices:
+            print(f"[skip] violin {kernel}/{fmt}: no aligned data")
+            continue
+        aligned = df[df["Matrix"].isin(matrices)]
+        scores = relative_score_table(aligned, configs)
+        plot_violin_scores(
+            scores, configs, libraries, colors,
+            f"Relative Throughput, {label}",
+            output_dir / filename,
+        )
+
+    spmv_plots = [
+        ("csr", "SpMV, CSR", "violin_spmv_csr.png"),
+        ("csc", "SpMV, CSC", "violin_spmv_csc.png"),
+    ]
+    for fmt, label, filename in spmv_plots:
+        if df_spmv.empty:
+            print(f"[skip] violin spmv/{fmt}: no benchmark data")
+            continue
+        configs, labels, matrices, _ = spmv_slice(df_spmv, fmt)
+        if not matrices:
+            print(f"[skip] violin spmv/{fmt}: no aligned data")
+            continue
+        aligned = df_spmv[df_spmv["Matrix"].isin(matrices)]
+        scores = relative_score_table(aligned, configs)
+        plot_violin_scores(
+            scores, configs, labels, SPMV_BACKEND_COLORS,
+            f"Relative Throughput, {label}",
+            output_dir / filename,
+        )
+
+
+def load_accuracy_data(data_dir):
+    _load_data_deps()
+    path = Path(data_dir) / ACCURACY_CSV
+    if not path.exists():
+        sys.stderr.write(
+            f"error: {path} not found.\n"
+            "       Generate it with:\n"
+            "       cargo run --release --bin lanczos_accuracy -- "
+            "--output python/data/lanczos_accuracy.csv\n"
+        )
+        sys.exit(1)
+
+    df = pd.read_csv(path)
+    required = {
+        "kernel", "matrix", "backend", "format", "m", "saad_tol",
+        "saad_estimate", "rel_l2_vs_faer", "norm_y", "status",
+    }
+    missing = required.difference(df.columns)
+    if missing:
+        missing_list = ", ".join(sorted(missing))
+        sys.stderr.write(f"error: {path} is missing columns: {missing_list}\n")
+        sys.exit(1)
+
+    df["rel_l2_vs_faer"] = pd.to_numeric(
+        df["rel_l2_vs_faer"], errors="coerce"
+    )
+    df["Configuration"] = df.apply(_accuracy_config, axis=1)
+    return df
+
+
+def _accuracy_config(row):
+    backend = "" if pd.isna(row["backend"]) else str(row["backend"])
+    fmt = "" if pd.isna(row["format"]) else str(row["format"])
+    if not fmt:
+        return backend
+    return f"{backend}/{fmt}"
+
+
+def _accuracy_label(config):
+    backend, fmt = config.split("/", 1)
+    return f"{backend}\n{fmt.upper()}"
+
+
+def plot_accuracy_kernel(df, kernel, title, save_path):
+    sub = df[
+        (df["kernel"] == kernel)
+        & (df["status"].isin(["ok", "diverged"]))
+        & df["rel_l2_vs_faer"].notna()
+    ].copy()
+    if sub.empty:
+        print(f"[accuracy] No data for {title}")
+        return
+
+    order = ["faer/csr", "eigen/csr", "eigen/csc",
+             "petsc/csr", "psblas/csr", "psblas/csc"]
+    configs = [cfg for cfg in order if cfg in set(sub["Configuration"])]
+    if not configs:
+        print(f"[accuracy] No plottable configurations for {title}")
+        return
+
+    sub = sub[sub["Configuration"].isin(configs)].copy()
+    positive = sub.loc[sub["rel_l2_vs_faer"] > 0.0, "rel_l2_vs_faer"]
+    floor = min(float(positive.min()) * 0.1, 1e-16) if not positive.empty else 1e-16
+    sub["Correct digits"] = -np.log10(sub["rel_l2_vs_faer"].clip(lower=floor))
+
+    out_path = Path(save_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    fig, ax = plt.subplots(figsize=(8.5, 5.2))
+    rng = np.random.default_rng(42)
+    positions = np.arange(1, len(configs) + 1)
+
+    for pos, cfg in zip(positions, configs):
+        values = sub.loc[
+            sub["Configuration"] == cfg, "Correct digits"
+        ].to_numpy(dtype=float)
+        if values.size == 0:
+            continue
+        backend = cfg.split("/", 1)[0]
+        color = LIBRARY_COLORS.get(backend, "#999999")
+        x = rng.normal(loc=pos, scale=0.045, size=len(values))
+        ax.scatter(
+            x,
+            values,
+            s=30,
+            color=color,
+            edgecolor="black",
+            linewidth=0.4,
+            alpha=0.85,
+            zorder=4,
+        )
+        median = float(np.median(values))
+        ax.hlines(
+            median,
+            pos - 0.22,
+            pos + 0.22,
+            colors="black",
+            linewidth=1.6,
+            zorder=5,
+        )
+
+    min_digits = max(0.0, float(sub["Correct digits"].min()) - 0.5)
+    max_digits = float(sub["Correct digits"].max()) + 0.5
+    ax.set_ylim(min_digits, max_digits)
+    ax.set_xticks(positions)
+    ax.set_xticklabels([_accuracy_label(cfg) for cfg in configs], rotation=0, ha="center")
+    ax.set_xlabel("Implementation / storage format", fontsize=12, labelpad=8)
+    ax.set_ylabel(r"$-\log_{10}$ relative L2 error vs faer/CSC", fontsize=12)
+    ax.set_title(title, fontsize=14, pad=12)
+    ax.grid(axis="y", linestyle="--", alpha=0.45)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=300, bbox_inches="tight", transparent=False)
+    plt.close()
+    print(f"[accuracy] Saved -> {out_path}")
+
+
+def run_accuracy(data_dir):
+    df = load_accuracy_data(data_dir)
+    output_dir = SCRIPT_DIR / "accuracy"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    plot_accuracy_kernel(
+        df,
+        "lanczos_one_pass",
+        "Lanczos One-Pass: Output Agreement vs faer/CSC",
+        output_dir / "accuracy_one_pass.png",
+    )
+    plot_accuracy_kernel(
+        df,
+        "lanczos_two_pass",
+        "Lanczos Two-Pass: Output Agreement vs faer/CSC",
+        output_dir / "accuracy_two_pass.png",
+    )
+
+
+def run_perfprof(data_dir):
+    output_dir = SCRIPT_DIR / "perfprof"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    print("Reading CSV benchmark summary (perfprof)...")
+    summary = load_summary_data(data_dir)
+    df_one = benchmark_summary(summary, "lanczos")
+    df_two = benchmark_summary(summary, "lanczos_two_pass")
+    df_spmv = benchmark_summary(summary, "spmv")
 
     if df_one.empty and df_two.empty and df_spmv.empty:
         print("No benchmark data found. Run "
@@ -811,38 +1103,25 @@ def run_perfprof(criterion_dir):
                       f'Performance Profile, {label}', pp_path)
 
 
-def run_lanczos_one_pass(criterion_dir, matrices_dir, hw_config_path):
-    """Lanczos one-pass plotting pipeline."""
-    print("Parsing Criterion JSON results (lanczos)...")
-    # The bench harness already encodes the full FLOP count in the
-    # throughput element count (m*(2*nnz + 11n)), so no division needed.
-    df = load_data(criterion_dir, "lanczos_", derive_nnz=lambda e: e,
-                   exclude_prefix="lanczos_two_pass_")
+def run_lanczos_one_pass(data_dir):
+    print("Reading CSV benchmark summary (lanczos)...")
+    df = benchmark_summary(load_summary_data(data_dir), "lanczos")
 
     if df.empty:
-        print("No lanczos data found. Run 'cargo bench --bench lanczos' first.")
+        print(f"No lanczos data found in {Path(data_dir) / SUMMARY_CSV}.")
         sys.exit(1)
 
     print(f"Found {len(df)} configurations across {df['Matrix'].nunique()} matrices.")
 
-    output_dir = Path(__file__).parent / "lanczos"
+    output_dir = SCRIPT_DIR / "lanczos"
     generate_plots(
         df, output_dir,
         config_order=LANCZOS_ONE_PASS_CONFIG_ORDER,
         backend_colors=LANCZOS_ONE_PASS_BACKEND_COLORS,
         title_prefix="One-Pass Lanczos Performance on",
-        matrix_dims=None,
-        hw_config=None,
     )
 
-    # TODO: Roofline for Lanczos one-pass. The dominant cost is m SpMVs
-    # plus a final n*m gemv, but the full-basis storage (O(n*m)) changes
-    # the effective cache behavior compared to the rolling-vector
-    # two-pass variant. Skipped until the traffic model is worked out.
-
-
 def _load_hw_config(hw_config_path):
-    """Load hw_config.json if it exists, or exit with instructions."""
     path = Path(hw_config_path)
     if not path.exists():
         sys.stderr.write(
@@ -860,7 +1139,6 @@ def _load_hw_config(hw_config_path):
 
 
 def _load_matrix_dims(matrices_dir):
-    """Load matrix dimensions or exit with instructions."""
     matrix_dims = read_mtx_dimensions(matrices_dir)
     if matrix_dims:
         print(f"Read dimensions for {len(matrix_dims)} matrices from {matrices_dir}/")
@@ -876,24 +1154,109 @@ def _load_matrix_dims(matrices_dir):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Plot Criterion benchmark results for HPLA-RS."
+        description=(
+            "Export Criterion raw CSV data and regenerate HPLA-RS benchmark plots. "
+            "Plot commands read python/data/summary.csv. They do not read "
+            "target/criterion directly."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Typical workflow:\n"
+            "  1. Run cargo bench for spmv, lanczos, and lanczos_two_pass.\n"
+            f"  2. {_script_command()} export-csv\n"
+            f"  3. {_script_command()} all\n\n"
+            "Commands:\n"
+            "  export-csv        collect target/criterion/**/new/raw.csv into python/data/*.csv\n"
+            "  spmv              SpMV bar charts and roofline plot\n"
+            "  lanczos_one_pass  one-pass Lanczos bar charts\n"
+            "  lanczos_two_pass  two-pass Lanczos bar charts\n"
+            "  perfprof          performance profiles for SpMV, one-pass, and two-pass\n"
+            "  violin            normalized-throughput violin plots for all kernels\n"
+            "  accuracy          Lanczos output-agreement plots\n"
+            "  all               run spmv, lanczos_one_pass, lanczos_two_pass, perfprof, violin"
+        ),
     )
     parser.add_argument(
         'bench', nargs='?', default='spmv',
-        choices=['spmv', 'lanczos', 'lanczos_two_pass', 'perfprof'],
-        help="Benchmark type to plot (default: spmv).",
+        choices=[
+            'export-csv',
+            'spmv',
+            'lanczos_one_pass',
+            'lanczos_two_pass',
+            'perfprof',
+            'violin',
+            'accuracy',
+            'all',
+        ],
+        metavar='command',
+        help=(
+            "command to run: export-csv, spmv, lanczos_one_pass, "
+            "lanczos_two_pass, perfprof, violin, accuracy, or all "
+            "(default: spmv)"
+        ),
+    )
+    parser.add_argument(
+        '--criterion-dir',
+        default=str(SCRIPT_DIR / ".." / "target" / "criterion"),
+        help=(
+            "Criterion output directory containing **/new/raw.csv files "
+            "(used only by export-csv). Default: repo target/criterion"
+        ),
+    )
+    parser.add_argument(
+        '--data-dir',
+        default=str(DEFAULT_DATA_DIR),
+        help=(
+            "directory containing raw_samples.csv and summary.csv, or where "
+            "export-csv writes them. Default: python/data"
+        ),
+    )
+    parser.add_argument(
+        '--matrices-dir',
+        default=str(SCRIPT_DIR / ".." / "matrices"),
+        help=(
+            "Matrix Market directory used only for SpMV roofline dimensions. "
+            "Default: repo matrices"
+        ),
+    )
+    parser.add_argument(
+        '--hw-config',
+        default=str(SCRIPT_DIR / "hw_config.json"),
+        help=(
+            "hardware config JSON generated by stream_bench.sh. Required for "
+            "spmv/all roofline. Default: python/hw_config.json"
+        ),
     )
     args = parser.parse_args()
 
-    criterion_dir = str(Path(__file__).parent / ".." / "target" / "criterion")
-    matrices_dir = str(Path(__file__).parent / ".." / "matrices")
-    hw_config_path = Path(__file__).parent / "hw_config.json"
-
-    if args.bench == 'spmv':
-        run_spmv(criterion_dir, matrices_dir, hw_config_path)
-    elif args.bench == 'lanczos':
-        run_lanczos_one_pass(criterion_dir, matrices_dir, hw_config_path)
+    if args.bench == 'export-csv':
+        export_csv_data(
+            args.criterion_dir,
+            args.data_dir,
+            args.matrices_dir,
+        )
+    elif args.bench == 'spmv':
+        _load_plot_deps()
+        run_spmv(args.data_dir, args.matrices_dir, args.hw_config)
+    elif args.bench == 'lanczos_one_pass':
+        _load_plot_deps()
+        run_lanczos_one_pass(args.data_dir)
     elif args.bench == 'lanczos_two_pass':
-        run_lanczos_two_pass(criterion_dir, matrices_dir, hw_config_path)
+        _load_plot_deps()
+        run_lanczos_two_pass(args.data_dir)
     elif args.bench == 'perfprof':
-        run_perfprof(criterion_dir)
+        _load_plot_deps()
+        run_perfprof(args.data_dir)
+    elif args.bench == 'violin':
+        _load_plot_deps()
+        run_violin(args.data_dir)
+    elif args.bench == 'accuracy':
+        _load_plot_deps()
+        run_accuracy(args.data_dir)
+    elif args.bench == 'all':
+        _load_plot_deps()
+        run_spmv(args.data_dir, args.matrices_dir, args.hw_config)
+        run_lanczos_one_pass(args.data_dir)
+        run_lanczos_two_pass(args.data_dir)
+        run_perfprof(args.data_dir)
+        run_violin(args.data_dir)
