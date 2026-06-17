@@ -3,14 +3,14 @@ name = "hpla-rs"
 version = "0.1.0"
 edition = "2024"
 authors = [
-    "Fabio Durastante <fabio.durastante@unipi.it>",
     "Luca Lombardo <l.lombardo11@studenti.unipi.it>",
+    "Fabio Durastante <fabio.durastante@unipi.it>",
 ]
 description = "Single-threaded sparse kernel benchmarks across faer, PETSc, Eigen, MKL, and PSBLAS: SpMV and symmetric Lanczos for exp(-A)b."
 readme = "README.md"
 license = "MIT"
 repository = "https://github.com/lukefleed/hpla-rs"
-keywords = ["sparse", "spmv", "lanczos", "benchmark", "hpc"]
+keywords = ["sparse-matrix", "spmv", "lanczos", "benchmark", "hpc"]
 categories = ["science", "mathematics", "algorithms"]
 
 [dependencies]

@@ -1,21 +1,23 @@
 # Single-Threaded Sparse Kernel Benchmarks
 
-Benchmarks for three sparse matrix kernels comparing [faer](https://github.com/sarah-quinones/faer-rs) with PETSc, Eigen, MKL, and PSBLAS on a single core.
+This repository contains the benchmark companion for the work *Evaluating Rust for Sparse Matrix Kernels in Scientific Computing*. It compares native Rust sparse kernels against PETSc, Eigen, Intel oneMKL, and PSBLAS on one CPU core.
 
-| Kernel | What it computes | Memory |
-|--------|-----------------|--------|
-| SpMV | `y += A*x` | O(nnz) |
-| One-pass Lanczos | `exp(-A)b` via full Krylov basis | O(n*m) |
-| Two-pass Lanczos | `exp(-A)b` via basis-free reconstruction | O(n) |
+The benchmark covers three kernels:
 
-The two Lanczos variants compute the same result. The difference is memory vs compute: one-pass stores the full basis V_m, two-pass discards it and replays the recurrence.
+| Kernel | Timed operation | Dominant matrix-dependent storage |
+|--------|-----------------|-----------------------------------|
+| SpMV | `y += A*x` | `O(nnz)` |
+| One-pass Lanczos | `exp(-A)b`, storing the Krylov basis | `O(n*m)` |
+| Two-pass Lanczos | `exp(-A)b`, reconstructing the basis in a second pass | `O(n)` |
 
-## Backends
+The Rust implementation uses a [fork](https://codeberg.org/lukefleed/faer) of [`faer`](https://codeberg.org/sarah-quinones/faer) that contains the CSR SpMV specialization evaluated in this work. The dependency is declared in [`Cargo.toml`](Cargo.toml) and pinned by [`Cargo.lock`](Cargo.lock).
+
+## Backend Configurations
 
 ### SpMV
 
-| Backend | Library | Format | Language |
-|---------|---------|--------|----------|
+| Benchmark ID | Library | Format | Implementation language |
+|--------------|---------|--------|--------------------------|
 | `faer/csc` | faer | CSC | Rust |
 | `faer/csr` | faer | CSR | Rust |
 | `petsc/csr` | PETSc | CSR | C |
@@ -23,15 +25,15 @@ The two Lanczos variants compute the same result. The difference is memory vs co
 | `eigen/csr_map` | Eigen | CSR | C++ |
 | `psblas/csr` | PSBLAS | CSR | C++/Fortran |
 | `psblas/csc` | PSBLAS | CSC | C++/Fortran |
-| `mkl/csr_ie` | Intel MKL | CSR IE | C |
-| `mkl/csc_ie` | Intel MKL | CSC IE | C |
+| `mkl/csr_ie` | Intel oneMKL | CSR inspection-execution | C |
+| `mkl/csc_ie` | Intel oneMKL | CSC inspection-execution | C |
 
 ### Lanczos
 
-Both Lanczos benches use the same matrix suite and the same Krylov dimension for a given matrix. The Krylov dimension is selected adaptively with the Saad a posteriori error estimate.
+Both Lanczos benchmarks use the same starting vector and the same Krylov dimension for every backend on a given matrix. The Krylov dimension is selected with [Saad's a posteriori estimator](https://epubs.siam.org/doi/10.1137/0729014) after scaling the matrix by an estimated spectral radius.
 
-| Benchmark ID prefix | Kernels | Library | Format | Language |
-|---------------------|---------|---------|--------|----------|
+| Benchmark ID prefix | Kernels | Library | Format | Implementation language |
+|---------------------|---------|---------|--------|--------------------------|
 | `faer_csc` | one-pass, two-pass | faer | CSC | Rust |
 | `faer_csr` | one-pass, two-pass | faer | CSR | Rust |
 | `eigen_csr` | one-pass, two-pass | Eigen | CSR | C++ |
@@ -40,9 +42,13 @@ Both Lanczos benches use the same matrix suite and the same Krylov dimension for
 | `psblas_csr` | one-pass, two-pass | PSBLAS | CSR | C++/Fortran |
 | `psblas_csc` | one-pass, two-pass | PSBLAS | CSC | C++/Fortran |
 
-### Matrix suite
+## Matrix Suites
 
-Fifteen symmetric matrices with small or zero mean diagonal, so the Saad estimator on `exp(-A)b` is meaningful at every Krylov dimension.
+[`download_matrices.sh`](download_matrices.sh) downloads 28 [SuiteSparse](https://sparse.tamu.edu/) matrices used by the SpMV benchmark:
+
+`amazon0302`, `atmosmodd`, `cant`, `inline_1`, `rajat31`, `thermal2`, `web-Google`, `audikw_1`, `Queen_4147`, `shipsec1`, `pdb1HYS`, `consph`, `mac_econ_fwd500`, `circuit5M`, `roadNet-CA`, `kron_g500-logn18`, `coPapersDBLP`, `as-Skitter`, `delaunay_n22`, `caidaRouterLevel`, `citationCiteseer`, `coAuthorsCiteseer`, `coPapersCiteseer`, `preferentialAttachment`, `smallworld`, `rgg_n_2_20_s0`, `belgium_osm`, and `auto`.
+
+The Lanczos benchmarks use the 15-matrix symmetric subset declared in [`src/lib.rs`](src/lib.rs). These matrices have small or zero mean diagonal, which keeps the Saad estimator meaningful for `exp(-A)b` at the target tolerance.
 
 | Matrix | Group | Class |
 |--------|-------|-------|
@@ -62,128 +68,126 @@ Fifteen symmetric matrices with small or zero mean diagonal, so the Saad estimat
 | `belgium_osm` | DIMACS10 | OpenStreetMap road network |
 | `auto` | DIMACS10 | Walshaw graph-partitioning benchmark |
 
-## Setup
+## Toolchain
 
-Install dependencies via [Spack](https://spack.io/):
+The Rust toolchain is pinned in [`rust-toolchain.toml`](rust-toolchain.toml) to `nightly-2026-04-14`, whose bundled LLVM major version matches the Spack `llvm@22` toolchain used for C and C++ wrappers. [`build.rs`](build.rs) checks this match before compiling the wrappers.
+
+Native dependencies are installed through the Spack environment in [`spack.yaml`](spack.yaml). The environment provides Intel oneMKL, Eigen, PETSc, PSBLAS, OpenMPI, OpenBLAS, GCC 14.3.0, and LLVM 22. PETSc is linked against oneMKL. PSBLAS is linked against OpenMPI and OpenBLAS.
+
+On a new machine, bootstrap the Spack compiler once:
+
+```bash
+source ~/spack/share/spack/setup-env.sh
+spack external find
+spack install gcc@14.3.0 languages=fortran,c,c++
+spack compiler add $(spack location -i gcc@14.3.0)
+```
+
+Then install the environment from the repository root:
 
 ```bash
 source ~/spack/share/spack/setup-env.sh
 spack env activate -d .
-spack concretize -f && spack install
+spack concretize -f
+spack install -v
 ```
 
-Download matrices:
+## Local Checks
+
+These commands check that the Rust crate and native wrappers build in the active Spack environment:
+
+```bash
+source ~/spack/share/spack/setup-env.sh
+spack env activate -d .
+
+cargo check --all-targets
+cargo clippy --all-targets
+```
+
+The equivalence tests in [`src/tests.rs`](src/tests.rs) link the native wrappers and run numerical checks on `kron_g500-logn18`, `coPapersDBLP`, and `thermal2`. `cargo test --release` checks SpMV plus one-pass and two-pass Lanczos: each backend result is compared with the `faer/CSC` reference by relative L2 error. These tests can take substantially longer than `cargo check`:
 
 ```bash
 bash download_matrices.sh
+cargo test --release
 ```
 
-## Build and run
+## Benchmarks
+
+The benchmark harnesses live in [`benches/spmv.rs`](benches/spmv.rs), [`benches/lanczos.rs`](benches/lanczos.rs), and [`benches/lanczos_two_pass.rs`](benches/lanczos_two_pass.rs). Benchmark runs must be single-threaded and pinned to one core:
 
 ```bash
 source ~/.cargo/env
 source ~/spack/share/spack/setup-env.sh
 spack env activate -d .
 
-cargo check --all-targets
-cargo test --release
-
+bash download_matrices.sh
 export RUSTFLAGS="-C target-cpu=native"
 export OMP_NUM_THREADS=1
+
 taskset -c 0 cargo bench --bench spmv
 taskset -c 0 cargo bench --bench lanczos
 taskset -c 0 cargo bench --bench lanczos_two_pass
 ```
 
-## Plotting
+The three `cargo bench` commands write Criterion sample data under `target/criterion/`. `spmv` measures steady-state `y += A*x` for all SpMV backends on the downloaded matrix suite. `lanczos` measures the complete one-pass `exp(-A)b` evaluation, and `lanczos_two_pass` measures the same matrix-function workload with the two-pass reconstruction.
 
-Criterion writes benchmark artifacts under `target/criterion/`. These files are _not_ committed. With Criterion's `csv_output` feature, the repository stores the data used for the figures as CSV files under `python/data/`:
+All Criterion groups use 50 samples, a 5 second warm-up, and a 100 second measurement window. Setup is outside the timed loop: matrix loading, format construction, backend context creation, MKL inspection, PSBLAS assembly, and workspace allocation are completed before Criterion enters `bench.iter`.
 
-- `raw_samples.csv`: Criterion raw samples collected from all `target/criterion/**/new/raw.csv` files.
-- `summary.csv`: one row per `(benchmark, matrix, configuration)`, with execution time estimated by an ordinary least-squares fit through the origin on `(iteration_count, sample_time)` and throughput derived from that estimate.
-- `lanczos_accuracy.csv`: relative L2 output error for Lanczos backends, measured against the `faer/CSC` reference and generated outside Criterion.
+## Benchmark Data and Figures
 
-The plotting script reads only these CSV files and does not parse Criterion JSON artifacts.
+The repository keeps the figure inputs as CSV tables under [`python/data/`](python/data/):
 
-Install the plotting dependencies if they are not already available:
+- [`raw_samples.csv`](python/data/raw_samples.csv): one row per Criterion sample, with the benchmark, matrix, configuration, iteration count, sample time, and derived per-sample throughput.
+- [`summary.csv`](python/data/summary.csv): one row per `(benchmark, matrix, configuration)`. [`python/plot.py`](python/plot.py) estimates time per iteration by an ordinary least-squares fit through the origin on `(iteration_count, sample_time)`, then derives throughput from that estimate.
+- [`lanczos_accuracy.csv`](python/data/lanczos_accuracy.csv): relative L2 differences against the `faer/CSC` reference, generated by [`lanczos_accuracy.rs`](src/bin/lanczos_accuracy.rs).
+
+The plotting pipeline is:
+
+- To reproduce the included figures, run [`python/plot.py`](python/plot.py) on the committed CSV files in [`python/data/`](python/data/)
+- After a new benchmark run, `cargo bench` writes raw samples under `target/criterion/**/new/raw.csv`, and `python3 python/plot.py export-csv` converts them into [`raw_samples.csv`](python/data/raw_samples.csv) and [`summary.csv`](python/data/summary.csv).
+- Accuracy and roofline data use separate inputs: `cargo run --release --bin lanczos_accuracy -- --output python/data/lanczos_accuracy.csv` regenerates [`lanczos_accuracy.csv`](python/data/lanczos_accuracy.csv), while [`stream_bench.sh`](stream_bench.sh) writes the local `hw_config.json` used by the SpMV roofline.
+
+Install plotting dependencies from [`python/requirements.txt`](python/requirements.txt):
 
 ```bash
 python3 -m pip install -r python/requirements.txt
 ```
 
-After running Criterion, generate `raw_samples.csv` and `summary.csv` with:
+To reproduce the figures from the included data, run the plotting commands directly:
 
 ```bash
-python3 python/plot.py export-csv
-```
-
-SpMV roofline requires STREAM Triad bandwidth. Measure it before running
-`plot.py spmv` or `plot.py all`:
-
-```bash
-bash stream_bench.sh   # writes python/hw_config.json
-```
-
-To regenerate figures from committed CSV data:
-
-```bash
-python3 python/plot.py spmv              # per-matrix SpMV bar charts + roofline
-python3 python/plot.py lanczos_one_pass  # one-pass Lanczos bar charts
-python3 python/plot.py lanczos_two_pass  # two-pass Lanczos bar charts
-python3 python/plot.py perfprof          # performance profiles
-python3 python/plot.py violin            # normalized-throughput violin plots
-python3 python/plot.py accuracy          # Lanczos output-agreement plots
-python3 python/plot.py all               # performance figures above
-```
-
-The Lanczos accuracy plots report `-log10` of the relative L2 output error against `faer/CSC`. Larger values indicate closer numerical agreement.
-
-To regenerate the Lanczos accuracy CSV and plots:
-
-```bash
-cargo run --release --bin lanczos_accuracy -- --output python/data/lanczos_accuracy.csv
+python3 python/plot.py lanczos_one_pass
+python3 python/plot.py lanczos_two_pass
+python3 python/plot.py perfprof
+python3 python/plot.py violin
 python3 python/plot.py accuracy
 ```
 
-To reproduce the benchmark data from scratch:
+The `all` command in [`python/plot.py`](python/plot.py) runs the SpMV, Lanczos, performance-profile, and violin plot commands. It also requires the local `python/hw_config.json` written by [`stream_bench.sh`](stream_bench.sh), because the SpMV roofline is part of the `all` target.
 
-```bash
-source ~/.cargo/env
-source ~/spack/share/spack/setup-env.sh
-spack env activate -d .
+## Measurement Platform
 
-bash download_matrices.sh
-export RUSTFLAGS="-C target-cpu=native"
-export OMP_NUM_THREADS=1
-taskset -c 0 cargo bench --bench spmv
-taskset -c 0 cargo bench --bench lanczos
-taskset -c 0 cargo bench --bench lanczos_two_pass
-
-python3 python/plot.py export-csv
-cargo run --release --bin lanczos_accuracy -- --output python/data/lanczos_accuracy.csv
-python3 python/plot.py all
-python3 python/plot.py accuracy
-```
-
-## Hardware
-
-All benchmarks run pinned to a single core on a quad-socket Intel Xeon Gold 6418H (Sapphire Rapids).
+The measurements in this work were collected on one pinned core of this machine:
 
 | | |
 |---|---|
-| CPU | Intel Xeon Gold 6418H @ 4.0 GHz (24 cores, 2 threads per core) |
+| CPU | Intel Xeon Gold 6418H, 24 cores per socket, 2 hardware threads per core |
+| Base frequency | 2.10 GHz |
 | Microarchitecture | Sapphire Rapids |
-| Memory | 2 TiB |
-| L1d / L2 / L3 | 48 KB / 2 MB / 60 MB per socket |
+| System memory | 2 TiB |
+| Cache | 48 KiB L1d, 2 MiB L2 per core, 60 MiB L3 per socket |
 | ISA | AVX-512F/BW/VL/VNNI/BF16/FP16, AMX |
+| OS | Ubuntu 24.04.4 LTS, Linux 6.8.0-111-generic, x86_64 |
 
-## Compiler flags
+The benchmark process is pinned with `taskset -c 0`, library threading is disabled with `OMP_NUM_THREADS=1`, and the MKL backend links against `mkl_sequential`.
+
+## Compiler Flags and Timed Boundary
 
 | Component | Compiler | Flags |
 |-----------|----------|-------|
-| C/C++ FFI wrappers | clang/clang++ | `-O3 -march=native -mtune=native -flto` |
-| Fortran PSBLAS wrappers | gfortran | `-O3 -march=native -mtune=native -ffat-lto-objects` |
-| Rust (faer + harness) | rustc (LLVM) | `opt-level=3, lto="fat", codegen-units=1, panic="abort"` |
-| Eigen Lanczos wrappers | clang++ C++20 | `-O3 -march=native -mtune=native -flto` |
+| C/C++ FFI wrappers | Spack `clang`/`clang++` from LLVM 22 | `-O3 -march=native -mtune=native -flto` |
+| Eigen Lanczos wrappers | Spack `clang++` from LLVM 22, C++20 | `-O3 -march=native -mtune=native -flto` |
+| Fortran PSBLAS wrappers | Spack `gfortran` from GCC 14.3.0 | `-O3 -march=native -mtune=native -ffat-lto-objects` |
+| Rust harness and native kernels | `rustc` from `nightly-2026-04-14` | `opt-level=3`, `lto="fat"`, `codegen-units=1`, `panic="abort"` |
 
-All backends receive the same CSR and CSC arrays allocated once by Rust. PETSc and Eigen wrap those arrays without copying. MKL may build optimized internal copies. PSBLAS assembles its own sparse matrix. Setup cost is excluded from the timed loop.
+All backends receive sparse arrays derived from the same [`RawMatrix`](src/lib.rs). PETSc and Eigen wrap Rust-owned arrays without copying. MKL may build optimized internal data during inspection. PSBLAS assembles its own sparse descriptor. The timed loop measures only backend execution on already constructed operands.
