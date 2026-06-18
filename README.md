@@ -1,6 +1,6 @@
 # Evaluating Rust for Sparse Matrix Kernels in Scientific Computing
 
-This repository contains the benchmark companion for the work *Evaluating Rust for Sparse Matrix Kernels in Scientific Computing*. It compares native Rust sparse kernels against PETSc, Eigen, Intel oneMKL, and PSBLAS on one CPU core.
+This repository contains the benchmark companion for the work [Evaluating Rust for Sparse Matrix Kernels in Scientific Computing](https://arxiv.org/abs/2606.19213). It compares native Rust sparse kernels against PETSc, Eigen, Intel oneMKL, and PSBLAS on one CPU core.
 
 The benchmark covers three kernels:
 
@@ -192,3 +192,19 @@ The benchmark process is pinned with `taskset -c 0`, library threading is disabl
 | Rust harness and native kernels | `rustc` from `nightly-2026-04-14` | `opt-level=3`, `lto="fat"`, `codegen-units=1`, `panic="abort"` |
 
 All backends receive sparse arrays derived from the same [`RawMatrix`](src/lib.rs). PETSc and Eigen wrap Rust-owned arrays without copying. MKL may build optimized internal data during inspection. PSBLAS assembles its own sparse descriptor. The timed loop measures only backend execution on already constructed operands.
+
+## Cite this work
+
+You can cite this work with the following BibTeX entry:
+
+```bibtex
+@misc{lombardo2026evaluatingrustsparsematrix,
+      title={Evaluating Rust for Sparse Matrix Kernels in Scientific Computing},
+      author={Luca Lombardo and Fabio Durastante},
+      year={2026},
+      eprint={2606.19213},
+      archivePrefix={arXiv},
+      primaryClass={cs.MS},
+      url={https://arxiv.org/abs/2606.19213},
+}
+```
